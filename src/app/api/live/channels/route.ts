@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getCachedLiveChannels } from '@/lib/live';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
   try {
     const { searchParams } = new URL(request.url);
     const sourceKey = searchParams.get('source');

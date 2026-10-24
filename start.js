@@ -23,6 +23,11 @@ function generateManifest() {
 
 generateManifest();
 
+// 本进程内调用 /api/cron 使用的一次性令牌（与 server.js 同进程，通过环境变量共享）
+process.env.INTERNAL_CRON_TOKEN =
+  process.env.INTERNAL_CRON_TOKEN ||
+  require('crypto').randomBytes(24).toString('hex');
+
 // 直接在当前进程中启动 standalone Server（`server.js`）
 require('./server.js');
 
@@ -63,7 +68,7 @@ function executeCronJob() {
 
   console.log(`Executing cron job: ${cronUrl}`);
 
-  const req = http.get(cronUrl, (res) => {
+  const req = http.get(cronUrl, { headers: { 'x-cron-token': process.env.INTERNAL_CRON_TOKEN } }, (res) => {
     let data = '';
 
     res.on('data', (chunk) => {

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { isKnownChannelLogo, isKnownChannelUrl } from '@/lib/live';
+import { requireAuth } from '@/lib/require-auth';
 import { verifyProxyUrl } from '@/lib/server-secret';
 
 export const DEFAULT_LIVE_UA = 'AptvPlayer/1.4.10';
@@ -33,6 +34,10 @@ export async function resolveProxyTarget(
   request: Request,
   entry: 'channel' | 'logo' | 'signed-only'
 ): Promise<ProxyTarget | NextResponse> {
+  // 被封禁 / 已删除 / 会话失效的用户不能继续使用代理
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
   const sourceKey =

@@ -205,7 +205,7 @@ async function getInitConfig(configFile: string, subConfig: {
   }
   const adminConfig: AdminConfig = {
     ConfigFile: configFile,
-    ConfigSubscribtion: subConfig,
+    ConfigSubscription: subConfig,
     SiteConfig: {
       SiteName: process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV',
       Announcement:
@@ -332,7 +332,7 @@ export async function getConfig(): Promise<AdminConfig> {
     // 仅在首次初始化时回写，避免每次缓存过期都产生一次写库
     if (needInit) {
       try {
-        await db.saveAdminConfig(cachedConfig);
+        await updateConfig(() => undefined);
       } catch (e) {
         console.error('保存管理员配置失败:', e);
       }
@@ -346,6 +346,16 @@ export async function getConfig(): Promise<AdminConfig> {
 }
 
 export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
+  // 字段名拼写修正迁移：ConfigSubscribtion → ConfigSubscription（兼容旧数据与旧备份）
+  const legacy = (adminConfig as any).ConfigSubscribtion;
+  if (legacy && !adminConfig.ConfigSubscription) {
+    adminConfig.ConfigSubscription = legacy;
+  }
+  delete (adminConfig as any).ConfigSubscribtion;
+  if (!adminConfig.ConfigSubscription) {
+    adminConfig.ConfigSubscription = { URL: '', AutoUpdate: false, LastCheck: '' };
+  }
+
   // 确保必要的属性存在和初始化
   if (!adminConfig.UserConfig) {
     adminConfig.UserConfig = { Users: [] };
@@ -427,21 +437,42 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
 }
 
 export async function resetConfig() {
-  let originConfig: AdminConfig | null = null;
-  try {
-    originConfig = await db.getAdminConfig();
-  } catch (e) {
-    console.error('获取管理员配置失败:', e);
-  }
-  if (!originConfig) {
-    originConfig = {} as AdminConfig;
-  }
-  const adminConfig = await getInitConfig(originConfig.ConfigFile, originConfig.ConfigSubscribtion);
-  cachedConfig = adminConfig;
-  cachedConfigAt = Date.now();
-  await db.saveAdminConfig(adminConfig);
+  await updateConfig(async (current) => {
+    const fresh = await getInitConfig(current.ConfigFile, current.ConfigSubscription);
+    // 整体替换为初始配置（保留配置文件与订阅设置）
+    Object.keys(current).forEach((k) => delete (current as any)[k]);
+    Object.assign(current, fresh);
+  });
+}
 
-  return;
+/**
+ * 以事务方式修改配置：读取数据库中最新的配置 → 深拷贝 → 执行修改 → 带版本号写回。
+ * 若写回时发现期间有其他写入（版本号变化），自动重试，避免并发保存互相覆盖。
+ *
+ * mutate 返回 Response（例如参数校验失败）时不写库，直接把该 Response 返回给调用方。
+ * mutate 内不要做耗时的网络请求，应在调用前完成。
+ */
+export async function updateConfig<T>(
+  mutate: (draft: AdminConfig) => T | Promise<T>
+): Promise<T> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { config, version } = await db.getAdminConfigWithVersion();
+    const base = config ? config : await getInitConfig('');
+    const draft = configSelfCheck(structuredClone(base));
+    const result = await mutate(draft);
+    if (result instanceof Response) {
+      return result;
+    }
+    const newVersion = await db.casAdminConfig(configSelfCheck(draft), version);
+    if (newVersion !== null) {
+      cachedConfig = draft;
+      cachedConfigAt = Date.now();
+      return result;
+    }
+    // 被并发写入抢先，稍等后基于最新数据重试
+    await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+  }
+  throw new Error('配置保存冲突，请稍后重试');
 }
 
 export async function getCacheTime(): Promise<number> {
@@ -499,7 +530,8 @@ export async function getAvailableApiSites(user?: string): Promise<ApiSite[]> {
   return allApiSites;
 }
 
-export async function setCachedConfig(config: AdminConfig) {
-  cachedConfig = config;
-  cachedConfigAt = Date.now();
+
+/** 让下一次 getConfig 重新读库（数据整体导入后使用） */
+export function invalidateConfigCache() {
+  cachedConfigAt = 0;
 }

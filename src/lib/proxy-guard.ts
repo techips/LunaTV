@@ -1,3 +1,7 @@
+import { lookup } from 'dns/promises';
+
+import { fetchWithTimeout } from './fetch-timeout';
+
 /**
  * 代理接口的通用安全校验。
  *
@@ -12,7 +16,7 @@ export function isImageContentType(contentType: string | null): boolean {
 }
 
 // 判断是否为内网/环回/链路本地地址，避免代理被用于探测内网服务
-function isPrivateHostname(hostname: string): boolean {
+export function isPrivateHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
   if (
@@ -24,8 +28,8 @@ function isPrivateHostname(hostname: string): boolean {
     return true;
   }
 
-  // IPv6 环回与唯一本地地址
-  if (host === '::1' || host === '::' || /^f[cd][0-9a-f]{2}:/.test(host)) {
+  // IPv6 环回、唯一本地地址与链路本地地址
+  if (host === '::1' || host === '::' || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) {
     return true;
   }
   // IPv4-mapped IPv6，如 ::ffff:127.0.0.1
@@ -66,3 +70,41 @@ export function checkImageProxyTarget(rawUrl: string): string | null {
 
   return null;
 }
+
+/**
+ * 请求公网地址：每一跳都先检查主机名并解析 DNS，任一地址落在内网 / 环回 / 链路本地即拒绝；
+ * 手动跟随最多 maxRedirects 次跳转，防止通过 30x 跳到内网。
+ */
+export async function fetchPublicUrl(
+  rawUrl: string,
+  init: RequestInit = {},
+  { maxRedirects = 3, timeoutMs = 10000 } = {}
+): Promise<Response> {
+  let url = rawUrl;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const reason = checkImageProxyTarget(url);
+    if (reason) throw new ProxyTargetError(reason);
+    const { hostname } = new URL(url);
+    let addrs: { address: string }[];
+    try {
+      addrs = await lookup(hostname.replace(/^\[|\]$/g, ''), { all: true });
+    } catch {
+      throw new ProxyTargetError('无法解析目标地址');
+    }
+    if (addrs.some((a) => isPrivateHostname(a.address))) {
+      throw new ProxyTargetError('不允许代理内网地址');
+    }
+
+    const res = await fetchWithTimeout(url, { ...init, redirect: 'manual' }, timeoutMs);
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location) {
+      res.body?.cancel().catch(() => undefined);
+      url = new URL(location, url).href;
+      continue;
+    }
+    return res;
+  }
+  throw new ProxyTargetError('跳转次数过多');
+}
+
+export class ProxyTargetError extends Error {}

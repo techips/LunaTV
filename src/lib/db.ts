@@ -184,6 +184,22 @@ export class DbManager {
     await this.storage.deleteUser(userName);
   }
 
+  async getPasswordHash(userName: string): Promise<string | null> {
+    return this.storage.getPasswordHash(userName);
+  }
+
+  async setPasswordHash(userName: string, stored: string): Promise<void> {
+    await this.storage.setPasswordHash(userName, stored);
+  }
+
+  async getSessionVersion(userName: string): Promise<number> {
+    return this.storage.getSessionVersion(userName);
+  }
+
+  async bumpSessionVersion(userName: string): Promise<number> {
+    return this.storage.bumpSessionVersion(userName);
+  }
+
   // ---------- 搜索历史 ----------
   async getSearchHistory(userName: string): Promise<string[]> {
     return this.storage.getSearchHistory(userName);
@@ -199,24 +215,37 @@ export class DbManager {
 
   // 获取全部用户名
   async getAllUsers(): Promise<string[]> {
-    if (typeof (this.storage as any).getAllUsers === 'function') {
-      return (this.storage as any).getAllUsers();
-    }
-    return [];
+    return this.storage.getAllUsers();
   }
 
   // ---------- 管理员配置 ----------
   async getAdminConfig(): Promise<AdminConfig | null> {
-    if (typeof (this.storage as any).getAdminConfig === 'function') {
-      return (this.storage as any).getAdminConfig();
-    }
-    return null;
+    return this.storage.getAdminConfig();
   }
 
   async saveAdminConfig(config: AdminConfig): Promise<void> {
-    if (typeof (this.storage as any).setAdminConfig === 'function') {
-      await (this.storage as any).setAdminConfig(config);
-    }
+    await this.storage.setAdminConfig(config);
+  }
+
+  async getAdminConfigWithVersion(): Promise<{ config: AdminConfig | null; version: number }> {
+    return this.storage.getAdminConfigWithVersion();
+  }
+
+  async casAdminConfig(config: AdminConfig, expectedVersion: number): Promise<number | null> {
+    return this.storage.casAdminConfig(config, expectedVersion);
+  }
+
+  // ---------- 托管直播播放列表 ----------
+  async getHostedPlaylist(key: string): Promise<string | null> {
+    return this.storage.getHostedPlaylist(key);
+  }
+
+  async setHostedPlaylist(key: string, content: string): Promise<void> {
+    await this.storage.setHostedPlaylist(key, content);
+  }
+
+  async deleteHostedPlaylist(key: string): Promise<void> {
+    await this.storage.deleteHostedPlaylist(key);
   }
 
   // ---------- 跳过片头片尾配置 ----------
@@ -225,10 +254,7 @@ export class DbManager {
     source: string,
     id: string
   ): Promise<SkipConfig | null> {
-    if (typeof (this.storage as any).getSkipConfig === 'function') {
-      return (this.storage as any).getSkipConfig(userName, source, id);
-    }
-    return null;
+    return this.storage.getSkipConfig(userName, source, id);
   }
 
   async setSkipConfig(
@@ -237,9 +263,7 @@ export class DbManager {
     id: string,
     config: SkipConfig
   ): Promise<void> {
-    if (typeof (this.storage as any).setSkipConfig === 'function') {
-      await (this.storage as any).setSkipConfig(userName, source, id, config);
-    }
+    await this.storage.setSkipConfig(userName, source, id, config);
   }
 
   async deleteSkipConfig(
@@ -247,27 +271,18 @@ export class DbManager {
     source: string,
     id: string
   ): Promise<void> {
-    if (typeof (this.storage as any).deleteSkipConfig === 'function') {
-      await (this.storage as any).deleteSkipConfig(userName, source, id);
-    }
+    await this.storage.deleteSkipConfig(userName, source, id);
   }
 
   async getAllSkipConfigs(
     userName: string
   ): Promise<{ [key: string]: SkipConfig }> {
-    if (typeof (this.storage as any).getAllSkipConfigs === 'function') {
-      return (this.storage as any).getAllSkipConfigs(userName);
-    }
-    return {};
+    return this.storage.getAllSkipConfigs(userName);
   }
 
   // ---------- 数据清理 ----------
   async clearAllData(): Promise<void> {
-    if (typeof (this.storage as any).clearAllData === 'function') {
-      await (this.storage as any).clearAllData();
-    } else {
-      throw new Error('存储类型不支持清空数据操作');
-    }
+    await this.storage.clearAllData();
   }
 }
 

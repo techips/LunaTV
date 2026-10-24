@@ -2,31 +2,21 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { rejectLocalStorage, requireAuth, revokeSessions } from '@/lib/require-auth';
+import { buildSessionCookies, isHttpsRequest } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  const local = rejectLocalStorage();
+  if (local) return local;
 
-  // 不支持 localstorage 模式
-  if (storageType === 'localstorage') {
-    return NextResponse.json(
-      {
-        error: '不支持本地存储模式修改密码',
-      },
-      { status: 400 }
-    );
-  }
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
 
   try {
-    const body = await request.json();
-    const { newPassword, oldPassword } = body;
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { newPassword, oldPassword } = await request.json();
     if (!oldPassword || typeof oldPassword !== 'string') {
       return NextResponse.json({ error: '旧密码不得为空' }, { status: 400 });
     }
@@ -36,29 +26,26 @@ export async function POST(request: NextRequest) {
     if (oldPassword === newPassword) {
       return NextResponse.json({ error: '新密码不能与旧密码相同' }, { status: 400 });
     }
-    const username = authInfo.username;
-    if (username === process.env.USERNAME) {
-      return NextResponse.json(
-        { error: '站长不能通过此接口修改密码' },
-        { status: 403 }
-      );
+    if (auth.role === 'owner') {
+      return NextResponse.json({ error: '站长不能通过此接口修改密码' }, { status: 403 });
     }
 
-    const valid = await db.verifyUser(username, oldPassword);
+    const valid = await db.verifyUser(auth.username, oldPassword);
     if (!valid) {
       return NextResponse.json({ error: '旧密码错误' }, { status: 401 });
     }
-    await db.changePassword(username, newPassword);
+    await db.changePassword(auth.username, newPassword);
+    // 其他设备上的旧会话全部失效，当前设备换发新 cookie
+    await revokeSessions(auth.username);
+    const version = await db.getSessionVersion(auth.username);
 
-    return NextResponse.json({ ok: true });
+    const response = NextResponse.json({ ok: true });
+    for (const c of buildSessionCookies(auth.username, auth.role, version, isHttpsRequest(request))) {
+      response.cookies.set(c.name, c.value, c.options);
+    }
+    return response;
   } catch (error) {
     console.error('修改密码失败:', error);
-    return NextResponse.json(
-      {
-        error: '修改密码失败',
-        details: (error as Error).message,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: '修改密码失败' }, { status: 500 });
   }
 }

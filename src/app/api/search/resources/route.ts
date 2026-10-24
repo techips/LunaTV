@@ -2,17 +2,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites } from '@/lib/config';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 // OrionTV 兼容接口
 export async function GET(request: NextRequest) {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo || !authInfo.username) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const authInfo = { username: auth.username };
   try {
     const apiSites = await getAvailableApiSites(authInfo.username);
 

@@ -2,31 +2,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
-import { db } from '@/lib/db';
+import { updateConfig } from '@/lib/config';
+import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-  if (storageType === 'localstorage') {
-    return NextResponse.json(
-      {
-        error: '不支持本地存储进行管理员配置',
-      },
-      { status: 400 }
-    );
-  }
+  const local = rejectLocalStorage();
+  if (local) return local;
+  const auth = await requireAuth(request, 'admin');
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const body = await request.json();
-
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const username = authInfo.username;
 
     const {
       SiteName,
@@ -69,37 +57,28 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
-
-    const adminConfig = await getConfig();
-
-    // 权限校验
-    if (username !== process.env.USERNAME) {
-      // 管理员
-      const user = adminConfig.UserConfig.Users.find(
-        (u) => u.username === username
-      );
-      if (!user || user.role !== 'admin' || user.banned) {
-        return NextResponse.json({ error: '权限不足' }, { status: 401 });
-      }
+    if (
+      SearchDownstreamMaxPage < 1 || SearchDownstreamMaxPage > 50 ||
+      SiteInterfaceCacheTime < 0 || SiteInterfaceCacheTime > 7 * 24 * 3600
+    ) {
+      return NextResponse.json({ error: '数值超出允许范围' }, { status: 400 });
     }
 
-    // 更新缓存中的站点设置
-    adminConfig.SiteConfig = {
-      SiteName,
-      Announcement,
-      SearchDownstreamMaxPage,
-      SiteInterfaceCacheTime,
-      DoubanProxyType,
-      DoubanProxy,
-      DoubanImageProxyType,
-      DoubanImageProxy,
-      DisableYellowFilter,
-      FluidSearch,
-      EnableWebLive: EnableWebLive ?? false,
-    };
-
-    // 写入数据库
-    await db.saveAdminConfig(adminConfig);
+    await updateConfig((adminConfig) => {
+      adminConfig.SiteConfig = {
+        SiteName,
+        Announcement,
+        SearchDownstreamMaxPage,
+        SiteInterfaceCacheTime,
+        DoubanProxyType,
+        DoubanProxy,
+        DoubanImageProxyType,
+        DoubanImageProxy,
+        DisableYellowFilter,
+        FluidSearch,
+        EnableWebLive: EnableWebLive ?? false,
+      };
+    });
 
     return NextResponse.json(
       { ok: true },

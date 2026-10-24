@@ -2,18 +2,17 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { requireAuth } from '@/lib/require-auth';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo || !authInfo.username) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const authInfo = { username: auth.username };
 
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q');

@@ -1,222 +1,113 @@
-/* eslint-disable no-console,@typescript-eslint/no-explicit-any */
+/* eslint-disable no-console */
+import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import {
+  clientIp,
+  loginRetryAfter,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from '@/lib/rate-limit';
+import { sessionVersionFor, storageType } from '@/lib/require-auth';
+import { buildSessionCookies, isHttpsRequest, Role } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
-// 读取存储类型环境变量，默认 localstorage
-const STORAGE_TYPE =
-  (process.env.NEXT_PUBLIC_STORAGE_TYPE as
-    | 'localstorage'
-    | 'redis'
-    | 'upstash'
-    | 'kvrocks'
-    | undefined) || 'localstorage';
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
 
-// 生成签名
-async function generateSignature(
-  data: string,
-  secret: string
-): Promise<string> {
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(secret);
-  const messageData = encoder.encode(data);
+async function issueSession(req: NextRequest, username: string, role: Role) {
+  const version = await sessionVersionFor(username);
+  const response = NextResponse.json({ ok: true });
+  for (const c of buildSessionCookies(username, role, version, isHttpsRequest(req))) {
+    response.cookies.set(c.name, c.value, c.options);
+  }
+  return response;
+}
 
-  // 导入密钥
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
+function tooManyAttempts(waitMs: number) {
+  const seconds = Math.ceil(waitMs / 1000);
+  return NextResponse.json(
+    { error: `尝试次数过多，请 ${seconds} 秒后再试` },
+    { status: 429, headers: { 'Retry-After': String(seconds) } }
   );
-
-  // 生成签名
-  const signature = await crypto.subtle.sign('HMAC', key, messageData);
-
-  // 转换为十六进制字符串
-  return Array.from(new Uint8Array(signature))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-// 判断当前请求是否走 HTTPS，用于决定 Cookie 的 Secure 属性
-// 仅在确定为 https 时才置为 true，http 部署保持原有行为，避免 Cookie 被浏览器丢弃
-function isHttpsRequest(req: NextRequest): boolean {
-  const forwardedProto = req.headers
-    .get('x-forwarded-proto')
-    ?.split(',')[0]
-    .trim()
-    .toLowerCase();
-  if (forwardedProto) {
-    return forwardedProto === 'https';
-  }
-  return req.nextUrl.protocol === 'https:';
-}
-
-// 生成认证Cookie（带签名）
-async function generateAuthCookie(
-  username?: string,
-  password?: string,
-  role?: 'owner' | 'admin' | 'user',
-  includePassword = false
-): Promise<string> {
-  const authData: any = { role: role || 'user' };
-
-  // 只在需要时包含 password
-  if (includePassword && password) {
-    authData.password = password;
-  }
-
-  if (username && process.env.PASSWORD) {
-    authData.username = username;
-    // 使用密码作为密钥对用户名进行签名
-    const signature = await generateSignature(username, process.env.PASSWORD);
-    authData.signature = signature;
-    authData.timestamp = Date.now(); // 添加时间戳防重放攻击
-  }
-
-  return encodeURIComponent(JSON.stringify(authData));
 }
 
 export async function POST(req: NextRequest) {
-  const useSecureCookie = isHttpsRequest(req);
+  const ip = clientIp(req);
   try {
-    // 本地 / localStorage 模式——仅校验固定密码
-    if (STORAGE_TYPE === 'localstorage') {
-      const envPassword = process.env.PASSWORD;
+    const body = await req.json().catch(() => ({}));
+    const password = body?.password;
+    const username = body?.username;
 
-      // 未配置 PASSWORD 时直接放行
-      if (!envPassword) {
-        const response = NextResponse.json({ ok: true });
-
-        // 清除可能存在的认证cookie
-        response.cookies.set('auth', '', {
-          path: '/',
-          expires: new Date(0),
-          sameSite: 'lax', // 改为 lax 以支持 PWA
-          httpOnly: false, // PWA 需要客户端可访问
-          secure: useSecureCookie, // 仅 HTTPS 下启用 Secure
-        });
-
-        return response;
-      }
-
-      const { password } = await req.json();
-      if (typeof password !== 'string') {
-        return NextResponse.json({ error: '密码不能为空' }, { status: 400 });
-      }
-
-      if (password !== envPassword) {
-        return NextResponse.json(
-          { ok: false, error: '密码错误' },
-          { status: 401 }
-        );
-      }
-
-      // 验证成功，设置认证cookie
-      const response = NextResponse.json({ ok: true });
-      const cookieValue = await generateAuthCookie(
-        undefined,
-        password,
-        'user',
-        true
-      ); // localstorage 模式包含 password
-      const expires = new Date();
-      expires.setDate(expires.getDate() + 7); // 7天过期
-
-      response.cookies.set('auth', cookieValue, {
-        path: '/',
-        expires,
-        sameSite: 'lax', // 改为 lax 以支持 PWA
-        httpOnly: false, // PWA 需要客户端可访问
-        secure: useSecureCookie, // 仅 HTTPS 下启用 Secure
-      });
-
-      return response;
-    }
-
-    // 数据库 / redis 模式——校验用户名并尝试连接数据库
-    const { username, password } = await req.json();
-
-    if (!username || typeof username !== 'string') {
-      return NextResponse.json({ error: '用户名不能为空' }, { status: 400 });
-    }
-    if (!password || typeof password !== 'string') {
+    if (typeof password !== 'string' || !password) {
       return NextResponse.json({ error: '密码不能为空' }, { status: 400 });
     }
 
-    // 可能是站长，直接读环境变量
-    if (
-      username === process.env.USERNAME &&
-      password === process.env.PASSWORD
-    ) {
-      // 验证成功，设置认证cookie
-      const response = NextResponse.json({ ok: true });
-      const cookieValue = await generateAuthCookie(
-        username,
-        password,
-        'owner',
-        false
-      ); // 数据库模式不包含 password
-      const expires = new Date();
-      expires.setDate(expires.getDate() + 7); // 7天过期
+    // 未配置 PASSWORD 时站点处于未保护状态，middleware 会引导到警告页
+    const envPassword = process.env.PASSWORD;
+    if (!envPassword) {
+      return NextResponse.json({ error: '站点未配置密码' }, { status: 500 });
+    }
 
-      response.cookies.set('auth', cookieValue, {
-        path: '/',
-        expires,
-        sameSite: 'lax', // 改为 lax 以支持 PWA
-        httpOnly: false, // PWA 需要客户端可访问
-        secure: useSecureCookie, // 仅 HTTPS 下启用 Secure
-      });
+    // 本地 / localStorage 模式——仅校验固定密码
+    if (storageType() === 'localstorage') {
+      const keys = [`ip:${ip}`];
+      const wait = loginRetryAfter(keys);
+      if (wait > 0) return tooManyAttempts(wait);
+      if (!safeEqual(password, envPassword)) {
+        recordLoginFailure(keys);
+        return NextResponse.json({ ok: false, error: '密码错误' }, { status: 401 });
+      }
+      recordLoginSuccess(keys);
+      return issueSession(req, '', 'user');
+    }
 
-      return response;
-    } else if (username === process.env.USERNAME) {
+    // 数据库模式——用户名 + 密码
+    if (!username || typeof username !== 'string') {
+      return NextResponse.json({ error: '用户名不能为空' }, { status: 400 });
+    }
+
+    const keys = [`ip:${ip}`, `user:${username}`];
+    const wait = loginRetryAfter(keys);
+    if (wait > 0) return tooManyAttempts(wait);
+
+    const fail = () => {
+      recordLoginFailure(keys);
       return NextResponse.json({ error: '用户名或密码错误' }, { status: 401 });
+    };
+
+    // 站长账号直接比对环境变量
+    if (username === process.env.USERNAME) {
+      if (!safeEqual(password, envPassword)) return fail();
+      recordLoginSuccess(keys);
+      return issueSession(req, username, 'owner');
     }
 
     const config = await getConfig();
     const user = config.UserConfig.Users.find((u) => u.username === username);
-    if (user && user.banned) {
-      return NextResponse.json({ error: '用户被封禁' }, { status: 401 });
-    }
 
-    // 校验用户密码
+    let pass = false;
     try {
-      const pass = await db.verifyUser(username, password);
-      if (!pass) {
-        return NextResponse.json(
-          { error: '用户名或密码错误' },
-          { status: 401 }
-        );
-      }
-
-      // 验证成功，设置认证cookie
-      const response = NextResponse.json({ ok: true });
-      const cookieValue = await generateAuthCookie(
-        username,
-        password,
-        user?.role || 'user',
-        false
-      ); // 数据库模式不包含 password
-      const expires = new Date();
-      expires.setDate(expires.getDate() + 7); // 7天过期
-
-      response.cookies.set('auth', cookieValue, {
-        path: '/',
-        expires,
-        sameSite: 'lax', // 改为 lax 以支持 PWA
-        httpOnly: false, // PWA 需要客户端可访问
-        secure: useSecureCookie, // 仅 HTTPS 下启用 Secure
-      });
-
-      return response;
+      pass = await db.verifyUser(username, password);
     } catch (err) {
       console.error('数据库验证失败', err);
       return NextResponse.json({ error: '数据库错误' }, { status: 500 });
     }
+    if (!pass) return fail();
+
+    // 先校验密码再提示封禁，避免通过不同提示探测用户是否存在
+    if (user?.banned) {
+      return NextResponse.json({ error: '用户被封禁' }, { status: 403 });
+    }
+
+    recordLoginSuccess(keys);
+    return issueSession(req, username, user?.role === 'admin' ? 'admin' : 'user');
   } catch (error) {
     console.error('登录接口异常', error);
     return NextResponse.json({ error: '服务器错误' }, { status: 500 });

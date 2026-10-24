@@ -2,17 +2,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
-import { API_CONFIG } from '@/lib/config';
+import { API_CONFIG, getConfig } from '@/lib/config';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo || !authInfo.username) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // 会向所有视频源发起请求，仅管理员可用
+  const auth = await requireAuth(request, 'admin');
+  if (auth instanceof NextResponse) return auth;
 
   const { searchParams } = new URL(request.url);
   const searchKeyword = searchParams.get('q');

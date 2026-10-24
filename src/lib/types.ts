@@ -83,6 +83,23 @@ export interface IStorage {
   deleteSkipConfig(userName: string, source: string, id: string): Promise<void>;
   getAllSkipConfigs(userName: string): Promise<{ [key: string]: SkipConfig }>;
 
+  // 密码值原样读写（备份导出/导入用，不做二次哈希）
+  getPasswordHash(userName: string): Promise<string | null>;
+  setPasswordHash(userName: string, stored: string): Promise<void>;
+
+  // 会话版本号：改密、封禁、删除时递增，使旧 cookie 失效
+  getSessionVersion(userName: string): Promise<number>;
+  bumpSessionVersion(userName: string): Promise<number>;
+
+  // 配置乐观锁
+  getAdminConfigWithVersion(): Promise<{ config: AdminConfig | null; version: number }>;
+  casAdminConfig(config: AdminConfig, expectedVersion: number): Promise<number | null>;
+
+  // 托管直播播放列表
+  getHostedPlaylist(key: string): Promise<string | null>;
+  setHostedPlaylist(key: string, content: string): Promise<void>;
+  deleteHostedPlaylist(key: string): Promise<void>;
+
   // 数据迁移（旧扁平 key → Hash 结构）
   migrateData?(): Promise<void>;
 

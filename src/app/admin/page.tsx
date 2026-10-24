@@ -3162,10 +3162,10 @@ const ConfigFileComponent = ({ config, refreshConfig }: { config: AdminConfig | 
     if (config?.ConfigFile) {
       setConfigContent(config.ConfigFile);
     }
-    if (config?.ConfigSubscribtion) {
-      setSubscriptionUrl(config.ConfigSubscribtion.URL);
-      setAutoUpdate(config.ConfigSubscribtion.AutoUpdate);
-      setLastCheckTime(config.ConfigSubscribtion.LastCheck || '');
+    if (config?.ConfigSubscription) {
+      setSubscriptionUrl(config.ConfigSubscription.URL);
+      setAutoUpdate(config.ConfigSubscription.AutoUpdate);
+      setLastCheckTime(config.ConfigSubscription.LastCheck || '');
     }
   }, [config]);
 
@@ -4594,7 +4594,7 @@ function AdminPageClient() {
   const handleConfirmResetConfig = async () => {
     await withLoading('resetConfig', async () => {
       try {
-        const response = await fetch(`/api/admin/reset`);
+        const response = await fetch(`/api/admin/reset`, { method: 'POST' });
         if (!response.ok) {
           throw new Error(`重置失败: ${response.status}`);
         }

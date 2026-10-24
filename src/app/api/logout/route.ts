@@ -1,18 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+
+import { buildClearCookies, isHttpsRequest } from '@/lib/session';
 
 export const runtime = 'nodejs';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
-
-  // 清除认证cookie
-  response.cookies.set('auth', '', {
-    path: '/',
-    expires: new Date(0),
-    sameSite: 'lax', // 改为 lax 以支持 PWA
-    httpOnly: false, // PWA 需要客户端可访问
-    secure: false, // 根据协议自动设置
-  });
-
+  // Secure 属性需与登录时一致，否则 HTTPS 下浏览器可能拒绝覆盖
+  for (const c of buildClearCookies(isHttpsRequest(request))) {
+    response.cookies.set(c.name, c.value, c.options);
+  }
   return response;
 }

@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { requireAuth } from '@/lib/require-auth';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
 
 // OrionTV 兼容接口
 export async function GET(request: NextRequest) {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo || !authInfo.username) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const authInfo = { username: auth.username };
 
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q');
@@ -24,10 +23,8 @@ export async function GET(request: NextRequest) {
       { result: null, error: '缺少必要参数: q 或 resourceId' },
       {
         headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
+          // 结果按用户可用的视频源过滤，只能由浏览器缓存，不能进入共享缓存
+          'Cache-Control': `private, max-age=${cacheTime}`,
         },
       }
     );
@@ -72,10 +69,8 @@ export async function GET(request: NextRequest) {
         { results: result },
         {
           headers: {
-            'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-            'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Netlify-Vary': 'query',
+            // 结果按用户可用的视频源过滤，只能由浏览器缓存，不能进入共享缓存
+            'Cache-Control': `private, max-age=${cacheTime}`,
           },
         }
       );

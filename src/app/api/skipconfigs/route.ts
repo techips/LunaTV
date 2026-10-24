@@ -2,33 +2,20 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/require-auth';
 import { SkipConfig } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    if (!auth.username) {
       return NextResponse.json({ error: '未登录' }, { status: 401 });
     }
-
-    const config = await getConfig();
-    if (authInfo.username !== process.env.USERNAME) {
-      // 非站长，检查用户存在或被封禁
-      const user = config.UserConfig.Users.find(
-        (u) => u.username === authInfo.username
-      );
-      if (!user) {
-        return NextResponse.json({ error: '用户不存在' }, { status: 401 });
-      }
-      if (user.banned) {
-        return NextResponse.json({ error: '用户已被封禁' }, { status: 401 });
-      }
-    }
+    const authInfo = { username: auth.username };
 
     const { searchParams } = new URL(request.url);
     const source = searchParams.get('source');
@@ -54,24 +41,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    if (!auth.username) {
       return NextResponse.json({ error: '未登录' }, { status: 401 });
     }
-
-    const adminConfig = await getConfig();
-    if (authInfo.username !== process.env.USERNAME) {
-      // 非站长，检查用户存在或被封禁
-      const user = adminConfig.UserConfig.Users.find(
-        (u) => u.username === authInfo.username
-      );
-      if (!user) {
-        return NextResponse.json({ error: '用户不存在' }, { status: 401 });
-      }
-      if (user.banned) {
-        return NextResponse.json({ error: '用户已被封禁' }, { status: 401 });
-      }
-    }
+    const authInfo = { username: auth.username };
 
     const body = await request.json();
     const { key, config } = body;
@@ -107,24 +82,12 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
+    const auth = await requireAuth(request);
+    if (auth instanceof NextResponse) return auth;
+    if (!auth.username) {
       return NextResponse.json({ error: '未登录' }, { status: 401 });
     }
-
-    const adminConfig = await getConfig();
-    if (authInfo.username !== process.env.USERNAME) {
-      // 非站长，检查用户存在或被封禁
-      const user = adminConfig.UserConfig.Users.find(
-        (u) => u.username === authInfo.username
-      );
-      if (!user) {
-        return NextResponse.json({ error: '用户不存在' }, { status: 401 });
-      }
-      if (user.banned) {
-        return NextResponse.json({ error: '用户已被封禁' }, { status: 401 });
-      }
-    }
+    const authInfo = { username: auth.username };
 
     const { searchParams } = new URL(request.url);
     const key = searchParams.get('key');

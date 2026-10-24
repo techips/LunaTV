@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 

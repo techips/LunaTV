@@ -5,6 +5,13 @@ import { AlertCircle, AlertTriangle, CheckCircle, Download, FileCheck, Lock, Upl
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+// 备份文件内容不可信，插入 HTML 前必须转义
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string)
+  );
+}
+
 interface DataMigrationProps {
   onRefreshConfig?: () => Promise<void>;
 }
@@ -289,9 +296,9 @@ const DataMigration = ({ onRefreshConfig }: DataMigrationProps) => {
         html: `
           <div class="text-left">
             <p><strong>导入完成！</strong></p>
-            <p class="mt-2">导入的用户数量: ${result.importedUsers}</p>
-            <p>备份时间: ${new Date(result.timestamp).toLocaleString('zh-CN')}</p>
-            <p>服务器版本: ${result.serverVersion || '未知版本'}</p>
+            <p class="mt-2">导入的用户数量: ${escapeHtml(String(result.importedUsers))}</p>
+            <p>备份时间: ${escapeHtml(new Date(result.timestamp).toLocaleString('zh-CN'))}</p>
+            <p>服务器版本: ${escapeHtml(String(result.serverVersion || '未知版本'))}</p>
             <p class="mt-3 text-orange-600">请刷新页面以查看最新数据。</p>
           </div>
         `,

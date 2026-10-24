@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 
-import { checkImageProxyTarget, isImageContentType } from '@/lib/proxy-guard';
+import { fetchPublicUrl, isImageContentType, ProxyTargetError } from '@/lib/proxy-guard';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 // OrionTV 兼容接口
 export async function GET(request: Request) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
   const { searchParams } = new URL(request.url);
   const imageUrl = searchParams.get('url');
 
@@ -13,14 +16,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
   }
 
-  // 只允许代理公网 http(s) 图片，避免被用来探测内网服务
-  const invalidReason = checkImageProxyTarget(imageUrl);
-  if (invalidReason) {
-    return NextResponse.json({ error: invalidReason }, { status: 400 });
-  }
-
   try {
-    const imageResponse = await fetch(imageUrl, {
+    // 只允许代理公网 http(s) 图片（含 DNS 解析结果与每一跳跳转），避免被用来探测内网服务
+    const imageResponse = await fetchPublicUrl(imageUrl, {
       headers: {
         Referer: 'https://movie.douban.com/',
         'User-Agent':
@@ -72,6 +70,9 @@ export async function GET(request: Request) {
       headers,
     });
   } catch (error) {
+    if (error instanceof ProxyTargetError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
       { error: 'Error fetching image' },
       { status: 500 }

@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getCacheTime } from '@/lib/config';
 import { getDetailFromApi } from '@/lib/downstream';
+import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const authInfo = getAuthInfoFromCookie(request);
-  if (!authInfo || !authInfo.username) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  const authInfo = { username: auth.username };
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
@@ -37,10 +36,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result, {
       headers: {
-        'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-        'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-        'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-        'Netlify-Vary': 'query',
+        // 结果按用户可用的视频源过滤，只能由浏览器缓存，不能进入共享缓存
+        'Cache-Control': `private, max-age=${cacheTime}`,
       },
     });
   } catch (error) {

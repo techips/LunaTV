@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
 import { fetchDoubanData } from '@/lib/douban';
+import { requireAuth } from '@/lib/require-auth';
 import { DoubanResult } from '@/lib/types';
 
 interface DoubanRecommendApiResponse {
@@ -26,6 +27,8 @@ interface DoubanRecommendApiResponse {
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return auth;
   const { searchParams } = new URL(request.url);
 
   // 获取参数

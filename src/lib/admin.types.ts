@@ -1,5 +1,5 @@
 export interface AdminConfig {
-  ConfigSubscribtion: {
+  ConfigSubscription: {
     URL: string;
     AutoUpdate: boolean;
     LastCheck: string;
@@ -46,7 +46,7 @@ export interface AdminConfig {
     from: 'config' | 'custom';
     disabled?: boolean;
   }[];
-  LiveConfig?: {
+  LiveConfig: {
     key: string;
     name: string;
     url: string;  // m3u 地址
