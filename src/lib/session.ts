@@ -35,17 +35,38 @@ export function signSession(u: string, v: number, exp: number): string {
   return hmacHex('session', sessionPayload(u, v, exp));
 }
 
+/** 返回 JSON 字符串；写入 cookie 时由 Next 负责 URL 编码 */
 export function createSessionToken(username: string, version: number, now = Date.now()): string {
   const exp = now + SESSION_TTL_MS;
   const token: SessionToken = { u: username, v: version, exp, sig: signSession(username, version, exp) };
-  return encodeURIComponent(JSON.stringify(token));
+  return JSON.stringify(token);
+}
+
+/** cookie 值可能是原始 JSON，也可能被编码过一到两次（不同读取方式），逐层尝试解析 */
+export function parseCookieJson(raw: string): unknown {
+  let cur = raw;
+  for (let i = 0; i < 3; i++) {
+    try {
+      return JSON.parse(cur);
+    } catch {
+      try {
+        const next = decodeURIComponent(cur);
+        if (next === cur) return null;
+        cur = next;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 export function parseSessionToken(raw: string | undefined | null): SessionToken | null {
   if (!raw) return null;
   try {
-    const t = JSON.parse(decodeURIComponent(raw));
+    const t = parseCookieJson(raw) as Partial<SessionToken> | null;
     if (
+      t &&
       typeof t?.u === 'string' &&
       typeof t?.v === 'number' &&
       typeof t?.exp === 'number' &&
@@ -93,7 +114,7 @@ export function buildSessionCookies(
     },
     {
       name: SESSION_INFO_COOKIE,
-      value: encodeURIComponent(JSON.stringify({ username, role })),
+      value: JSON.stringify({ username, role }),
       options: { path: '/', expires, sameSite: 'lax', httpOnly: false, secure },
     },
   ];

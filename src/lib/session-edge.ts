@@ -31,12 +31,23 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 export async function verifySessionCookieEdge(raw: string | undefined): Promise<boolean> {
   if (!raw) return false;
-  let t: { u?: unknown; v?: unknown; exp?: unknown; sig?: unknown };
-  try {
-    t = JSON.parse(decodeURIComponent(raw));
-  } catch {
-    return false;
+  // 与 session.ts 的 parseCookieJson 一致：兼容原始 JSON 与被编码过的值
+  let t: { u?: unknown; v?: unknown; exp?: unknown; sig?: unknown } | null = null;
+  let cur = raw;
+  for (let i = 0; i < 3 && !t; i++) {
+    try {
+      t = JSON.parse(cur);
+    } catch {
+      try {
+        const next = decodeURIComponent(cur);
+        if (next === cur) break;
+        cur = next;
+      } catch {
+        break;
+      }
+    }
   }
+  if (!t || typeof t !== 'object') return false;
   if (
     typeof t.u !== 'string' ||
     typeof t.v !== 'number' ||

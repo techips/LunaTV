@@ -46,6 +46,14 @@ describe('会话令牌', () => {
     }
   });
 
+  it('cookie 值无论是原始 JSON 还是被编码一次 / 两次都能解析（Next 会对 cookie 值再编码）', async () => {
+    const raw = createSessionToken('alice', 1);
+    for (const v of [raw, encodeURIComponent(raw), encodeURIComponent(encodeURIComponent(raw))]) {
+      expect(verifySessionToken(parseSessionToken(v))).toBe(true);
+      expect(await verifySessionCookieEdge(v)).toBe(true);
+    }
+  });
+
   it('过期令牌被拒绝', async () => {
     const past = Date.now() - SESSION_TTL_MS - 1000;
     const raw = createSessionToken('alice', 0, past);
