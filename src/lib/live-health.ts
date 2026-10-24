@@ -25,6 +25,8 @@ export interface HealthSummary {
   total: number;
   ok: number;
   down: number;
+  /** HEAD 不受支持、又不像播放列表的线路，没有判断 */
+  unknown: number;
   durationMs: number;
 }
 
@@ -72,28 +74,71 @@ export function classifyHead(head: Uint8Array): { ok: boolean; reason?: string }
   return { ok: false, reason: '无法识别的内容' };
 }
 
-export async function checkLine(url: string, ua: string): Promise<LineHealth> {
+// 播放列表一定是小文件，可以放心 GET；其余（视频流）只看响应头，不读响应体
+const PLAYLIST_PATH_RE = /\.(m3u8?|txt)(\?|$)/i;
+
+function isPlaylistType(ct: string): boolean {
+  return /mpegurl|text\/plain/i.test(ct);
+}
+
+function isStreamType(ct: string): boolean {
+  return /^(video|audio)\//i.test(ct) || /x-flv|mp2t/i.test(ct);
+}
+
+/**
+ * 检查一条线路是否可用。
+ *
+ * 只发 HEAD 判断：直播的 TS / FLV 是不会结束的流，GET 之后即使立刻断开，
+ * 经过 Docker Desktop 代理等中间层时上游连接也可能不会关闭，导致持续下载。
+ * 因此只有确认是播放列表（小文件）时才会 GET；视频流根据响应头判定可用；
+ * HEAD 不被支持且地址也不像播放列表时，不做判断（返回 null，不标记失效）。
+ */
+export async function checkLine(url: string, ua: string): Promise<LineHealth | null> {
   const t0 = Date.now();
+  const done = (state: HealthState, reason?: string): LineHealth => ({
+    state,
+    ms: Date.now() - t0,
+    checkedAt: Date.now(),
+    reason,
+  });
+  const headers = { 'User-Agent': ua };
+
+  let head: Response;
   try {
-    const res = await fetchWithHeaderTimeout(url, { headers: { 'User-Agent': ua } }, 8000);
+    head = await fetchWithHeaderTimeout(url, { method: 'HEAD', redirect: 'follow', headers }, 8000);
+  } catch (error) {
+    return done('down', (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message);
+  }
+
+  const ct = head.headers.get('content-type') || '';
+  const finalUrl = head.url || url;
+  const headUnsupported = head.status === 405 || head.status === 501;
+
+  if (!head.ok && !headUnsupported) return done('down', `HTTP ${head.status}`);
+  if (head.ok && isStreamType(ct)) return done('ok');
+
+  const looksLikePlaylist = (head.ok && isPlaylistType(ct)) || PLAYLIST_PATH_RE.test(new URL(finalUrl).pathname);
+  if (!looksLikePlaylist) {
+    // HEAD 正常但类型不明（例如 octet-stream）：服务器在线，按可用处理，不去下载
+    return head.ok ? done('ok') : null;
+  }
+
+  try {
+    const res = await fetchWithHeaderTimeout(finalUrl, { headers }, 8000);
     if (!res.ok) {
       res.body?.cancel().catch(() => undefined);
-      return { state: 'down', ms: Date.now() - t0, checkedAt: Date.now(), reason: `HTTP ${res.status}` };
+      return done('down', `HTTP ${res.status}`);
+    }
+    // 防御：GET 拿到的其实是视频流时不读内容
+    const getType = res.headers.get('content-type') || '';
+    if (isStreamType(getType)) {
+      res.body?.cancel().catch(() => undefined);
+      return done('ok');
     }
     const verdict = classifyHead(await readHead(res));
-    return {
-      state: verdict.ok ? 'ok' : 'down',
-      ms: Date.now() - t0,
-      checkedAt: Date.now(),
-      reason: verdict.reason,
-    };
+    return done(verdict.ok ? 'ok' : 'down', verdict.reason);
   } catch (error) {
-    return {
-      state: 'down',
-      ms: Date.now() - t0,
-      checkedAt: Date.now(),
-      reason: (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message,
-    };
+    return done('down', (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message);
   }
 }
 
@@ -118,13 +163,18 @@ export function checkSourceHealth(key: string, ua?: string): Promise<HealthSumma
     const channels: LiveChannel[] = data?.channels || [];
     const urls = Array.from(new Set(channels.map((c) => c.url)));
     let ok = 0;
+    let down = 0;
     await runPool(urls, 16, async (url) => {
       const h = await checkLine(url, ua || 'AptvPlayer/1.4.10');
+      if (!h) return;
       health.set(url, h);
       if (h.state === 'ok') ok++;
+      else down++;
     });
-    const summary = { key, total: urls.length, ok, down: urls.length - ok, durationMs: Date.now() - t0 };
-    logger.info(`直播源 ${key} 线路检查完成: ${ok}/${urls.length} 可用，用时 ${summary.durationMs}ms`);
+    const summary = { key, total: urls.length, ok, down, unknown: urls.length - ok - down, durationMs: Date.now() - t0 };
+    logger.info(
+      `直播源 ${key} 线路检查完成: 可用 ${ok}，失效 ${down}，未判断 ${summary.unknown}，共 ${urls.length}，用时 ${summary.durationMs}ms`
+    );
     return summary;
   })().finally(() => running.delete(key));
   running.set(key, job);

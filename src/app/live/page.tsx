@@ -856,9 +856,21 @@ function LivePageClient() {
 
       if (!data.fatal) return;
       switch (data.type) {
-        case Hls.ErrorTypes.NETWORK_ERROR:
+        case Hls.ErrorTypes.NETWORK_ERROR: {
+          // 播放列表请求被拒（4xx）重试也没用，直接提示，避免无限重试
+          const code = Number(data.response?.code || 0);
+          if (code >= 400 && code < 500 && (data.details === 'manifestLoadError' || data.details === 'levelLoadError')) {
+            setPlaybackIssue({
+              title: '无法播放该线路',
+              detail: code === 415 ? '该线路不是 HLS 播放列表，暂不支持播放，请换一条线路。' : `直播源返回 ${code}，请换一条线路试试。`,
+            });
+            hls.destroy();
+            setIsVideoLoading(false);
+            break;
+          }
           hls.startLoad();
           break;
+        }
         case Hls.ErrorTypes.MEDIA_ERROR: {
           const details = String(data.details || '');
           if (details === 'bufferAddCodecError' || details === 'manifestIncompatibleCodecsError') {

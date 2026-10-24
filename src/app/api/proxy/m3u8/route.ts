@@ -41,41 +41,58 @@ export async function GET(request: Request) {
   }
 
   const contentType = upstream.headers.get('Content-Type') || '';
+  const notHls = () =>
+    NextResponse.json({ error: '该线路不是 HLS 播放列表，暂不支持播放' }, { status: 415 });
 
-  if (isPlaylistContentType(contentType)) {
-    const text = await upstream.text();
-    // octet-stream 也可能是直接的视频流，只有内容确实是播放列表才改写
-    if (looksLikePlaylist(text)) {
-      const body = rewritePlaylist(text, upstream.url || target.url, {
-        proxyBase: '/api/proxy',
-        sourceKey: target.sourceKey,
-        sign: signProxyUrl,
-        direct,
-      });
-      return new Response(body, {
-        headers: {
-          ...CORS_HEADERS,
-          'Content-Type': 'application/vnd.apple.mpegurl',
-          'Cache-Control': 'no-cache',
-        },
-      });
-    }
-    return new Response(text, {
-      headers: {
-        ...CORS_HEADERS,
-        'Content-Type': contentType || 'application/octet-stream',
-        'Cache-Control': 'no-cache',
-      },
-    });
+  // 视频流（TS / FLV 等）不转发：播放器只支持 HLS，且这类流不会结束
+  if (!isPlaylistContentType(contentType)) {
+    upstream.body?.cancel().catch(() => undefined);
+    return notHls();
   }
 
-  // 非播放列表（例如直接的 TS / FLV 流）原样透传
-  return new Response(upstream.body, {
-    status: 200,
+  const text = await readPlaylistText(upstream);
+  if (text === null) return notHls();
+
+  const body = rewritePlaylist(text, upstream.url || target.url, {
+    proxyBase: '/api/proxy',
+    sourceKey: target.sourceKey,
+    sign: signProxyUrl,
+    direct,
+  });
+  return new Response(body, {
     headers: {
       ...CORS_HEADERS,
-      'Content-Type': contentType || 'application/octet-stream',
+      'Content-Type': 'application/vnd.apple.mpegurl',
       'Cache-Control': 'no-cache',
     },
   });
+}
+
+const MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
+
+/**
+ * 有上限地读取播放列表。octet-stream 等类型可能其实是视频流：
+ * 第一块内容不是 #EXTM3U 或超过大小上限时立即停止，返回 null。
+ */
+async function readPlaylistText(res: Response): Promise<string | null> {
+  if (!res.body) return null;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+      if (size > MAX_PLAYLIST_BYTES || (text.length >= 16 && !looksLikePlaylist(text))) {
+        return null;
+      }
+    }
+    text += decoder.decode();
+    return looksLikePlaylist(text) ? text : null;
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
 }

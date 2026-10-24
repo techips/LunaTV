@@ -87,9 +87,10 @@ async function cronJob() {
   await refreshRecordAndFavorites();
 }
 
-// 线路健康检查：可通过 LIVE_HEALTH_CHECK=false 关闭
+// 定时线路检查默认关闭（每次要请求所有线路，频道多时开销大）；LIVE_HEALTH_CHECK=true 开启。
+// 后台「检测线路」按钮随时可以手动检查。
 async function checkAllLineHealth() {
-  if (process.env.LIVE_HEALTH_CHECK === 'false') return;
+  if (process.env.LIVE_HEALTH_CHECK !== 'true') return;
   const config = await getConfig();
   for (const live of config.LiveConfig.filter((l) => !l.disabled)) {
     try {
