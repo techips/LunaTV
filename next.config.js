@@ -8,11 +8,6 @@ const nextConfig = {
   },
 
   reactStrictMode: false,
-  swcMinify: true,
-
-  experimental: {
-    instrumentationHook: process.env.NODE_ENV === 'production',
-  },
 
   // Uncoment to add domain whitelist
   images: {
@@ -69,11 +64,13 @@ const nextConfig = {
   },
 };
 
-const withPWA = require('next-pwa')({
-  dest: 'public',
+// PWA：Serwist（next-pwa 的后继，支持 Next.js 15）
+const withSerwist = require('@serwist/next').default({
+  swSrc: 'src/app/sw.ts',
+  swDest: 'public/sw.js',
   disable: process.env.NODE_ENV === 'development',
   register: true,
-  skipWaiting: true,
+  reloadOnOnline: false,
 });
 
-module.exports = withPWA(nextConfig);
+module.exports = withSerwist(nextConfig);

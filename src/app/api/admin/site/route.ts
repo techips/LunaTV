@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { updateConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
@@ -89,7 +88,7 @@ export async function POST(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error('更新站点配置失败:', error);
+    logger.error('更新站点配置失败:', error);
     return NextResponse.json(
       {
         error: '更新站点配置失败',

@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-
 import { NextResponse } from 'next/server';
 
 import { fetchWithTimeout } from '@/lib/fetch-timeout';
@@ -9,6 +7,7 @@ import {
   rewritePlaylist,
 } from '@/lib/hls-rewrite';
 import { CORS_HEADERS, resolveProxyTarget } from '@/lib/live-proxy';
+import { logger } from '@/lib/logger';
 import { signProxyUrl } from '@/lib/server-secret';
 
 export const runtime = 'nodejs';
@@ -29,7 +28,7 @@ export async function GET(request: Request) {
       15000
     );
   } catch (error) {
-    console.warn('m3u8 代理请求失败:', target.url, (error as Error).message);
+    logger.warn('m3u8 代理请求失败:', target.url, (error as Error).message);
     return NextResponse.json({ error: 'Failed to fetch m3u8' }, { status: 502 });
   }
 

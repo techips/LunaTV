@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { logger } from '@/lib/logger';
 import { requireAuth } from '@/lib/require-auth';
+import { SearchResult } from '@/lib/types';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
         setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
       ),
     ]).catch((err) => {
-      console.warn(`搜索失败 ${site.name}:`, err.message);
+      logger.warn(`搜索失败 ${site.name}:`, err.message);
       return []; // 返回空数组而不是抛出错误
     })
   );
@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     const results = await Promise.allSettled(searchPromises);
     const successResults = results
       .filter((result) => result.status === 'fulfilled')
-      .map((result) => (result as PromiseFulfilledResult<any>).value);
+      .map((result) => (result as PromiseFulfilledResult<SearchResult[]>).value);
     let flattenedResults = successResults.flat();
     if (!config.SiteConfig.DisableYellowFilter) {
       flattenedResults = flattenedResults.filter((result) => {

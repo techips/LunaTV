@@ -1,9 +1,8 @@
-/* eslint-disable no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig, updateConfig } from '@/lib/config';
 import { deleteCachedLiveChannels, deleteHostedPlaylist, refreshLiveChannels } from '@/lib/live';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
@@ -59,7 +58,7 @@ export async function POST(request: NextRequest) {
         try {
           info.channelNumber = await refreshLiveChannels(info);
         } catch (error) {
-          console.error('刷新直播源失败:', (error as Error).message);
+          logger.error('刷新直播源失败:', (error as Error).message);
         }
 
         return await updateConfig((cfg) => {
@@ -117,7 +116,7 @@ export async function POST(request: NextRequest) {
         return bad('未知操作');
     }
   } catch (error) {
-    console.error('直播源操作失败:', error);
+    logger.error('直播源操作失败:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '操作失败' },
       { status: 500 }

@@ -1,5 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
-
+/* eslint-disable no-console, @typescript-eslint/no-non-null-assertion */
 import { BaseRedisStorage } from './redis-base.db';
 
 export class RedisStorage extends BaseRedisStorage {

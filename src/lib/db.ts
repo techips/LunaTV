@@ -1,7 +1,7 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
-
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 import { AdminConfig } from './admin.types';
 import { KvrocksStorage } from './kvrocks.db';
+import { logger } from './logger';
 import { RedisStorage } from './redis.db';
 import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
 import { UpstashRedisStorage } from './upstash.db';
@@ -60,7 +60,7 @@ export class DbManager {
           await this.storage.migratePasswords();
         }
       }).catch((err) => {
-        console.error('数据迁移异常:', err);
+        logger.error('数据迁移异常:', err);
       });
     }
   }

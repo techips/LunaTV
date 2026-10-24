@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
@@ -50,7 +48,7 @@ export async function resolveProxyTarget(
   }
 
   const config = await getConfig();
-  const liveSource = config.LiveConfig?.find((s: any) => s.key === sourceKey);
+  const liveSource = config.LiveConfig.find((s) => s.key === sourceKey);
   if (!liveSource || liveSource.disabled) {
     return NextResponse.json({ error: 'Source not found' }, { status: 404 });
   }

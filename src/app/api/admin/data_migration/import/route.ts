@@ -1,9 +1,8 @@
-/* eslint-disable no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { restoreBackup, unpackBackup } from '@/lib/backup';
 import { invalidateConfigCache } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 import { CURRENT_VERSION } from '@/lib/version';
 
@@ -50,7 +49,7 @@ export async function POST(req: NextRequest) {
       serverVersion: typeof data.serverVersion === 'string' ? data.serverVersion : '未知版本',
     });
   } catch (error) {
-    console.error('数据导入失败:', error);
+    logger.error('数据导入失败:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '导入失败' },
       { status: 500 }

@@ -11,7 +11,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES = Number(process.env.SEGMENT_CACHE_MB || 256) * 1024 * 1024;
 
 export interface CachedSegment {
-  body: Uint8Array;
+  body: Uint8Array<ArrayBuffer>;
   contentType: string;
   at: number;
 }

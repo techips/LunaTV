@@ -1,8 +1,8 @@
-/* eslint-disable no-console */
-
 import { getConfig, updateConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { fetchWithTimeout } from '@/lib/fetch-timeout';
+
+import { logger } from './logger';
 
 const defaultUA = 'AptvPlayer/1.4.10';
 
@@ -151,7 +151,7 @@ export async function refreshAllLiveSources(): Promise<Record<string, number>> {
       try {
         counts[l.key] = await refreshLiveChannels(l);
       } catch (error) {
-        console.error(`刷新直播源失败 [${l.name || l.key}]:`, (error as Error).message);
+        logger.error(`刷新直播源失败 [${l.name || l.key}]:`, (error as Error).message);
         counts[l.key] = 0;
       }
     })
@@ -174,7 +174,7 @@ export async function getCachedLiveChannels(key: string): Promise<LiveChannels |
     if (Date.now() - hit.fetchedAt > CHANNEL_TTL_MS) {
       refreshLiveChannels(info)
         .then((n) => (n !== info.channelNumber ? saveChannelCounts({ [key]: n }) : undefined))
-        .catch((e) => console.error(`后台刷新直播源失败 [${key}]:`, e.message));
+        .catch((e) => logger.error(`后台刷新直播源失败 [${key}]:`, e.message));
     }
     return hit;
   }
@@ -183,7 +183,7 @@ export async function getCachedLiveChannels(key: string): Promise<LiveChannels |
     const n = await refreshLiveChannels(info);
     if (n !== info.channelNumber) await saveChannelCounts({ [key]: n });
   } catch (error) {
-    console.error(`加载直播源失败 [${key}]:`, (error as Error).message);
+    logger.error(`加载直播源失败 [${key}]:`, (error as Error).message);
     return null;
   }
   return cache.get(key) || null;
@@ -320,7 +320,10 @@ export async function parseXmltvStream(
   onProgramme: (channelId: string, p: EpgProgram) => void,
   now = Date.now()
 ): Promise<void> {
-  const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  // TS 的 DOM 类型把 TextDecoderStream 的写入端声明得过窄，运行时接受 Uint8Array
+  const reader = stream
+    .pipeThrough(new TextDecoderStream() as unknown as TransformStream<Uint8Array, string>)
+    .getReader();
   let buf = '';
   const minEnd = now - EPG_KEEP_BEFORE_MS;
   const maxStart = now + EPG_KEEP_AFTER_MS;
@@ -435,7 +438,7 @@ async function buildEpgIndex(
         }
       );
     } catch (error) {
-      console.warn(`节目单解析失败 ${url}:`, (error as Error).message);
+      logger.warn(`节目单解析失败 ${url}:`, (error as Error).message);
     }
   }
 

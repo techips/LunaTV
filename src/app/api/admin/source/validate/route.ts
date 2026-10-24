@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { API_CONFIG, getConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
@@ -47,7 +46,7 @@ export async function GET(request: NextRequest) {
           controller.enqueue(data);
           return true;
         } catch (error) {
-          console.warn('Failed to enqueue data:', error);
+          logger.warn('Failed to enqueue data:', error);
           streamClosed = true;
           return false;
         }
@@ -88,7 +87,7 @@ export async function GET(request: NextRequest) {
               throw new Error(`HTTP ${response.status}`);
             }
 
-            const data = await response.json() as any;
+            const data = (await response.json()) as { list?: { vod_name?: string }[] };
 
             // 检查结果是否有效
             let status: 'valid' | 'no_results' | 'invalid';
@@ -99,7 +98,7 @@ export async function GET(request: NextRequest) {
               data.list.length > 0
             ) {
               // 检查是否有标题包含搜索词的结果
-              const validResults = data.list.filter((item: any) => {
+              const validResults = data.list.filter((item) => {
                 const title = item.vod_name || '';
                 return title.toLowerCase().includes(searchKeyword.toLowerCase());
               });
@@ -134,7 +133,7 @@ export async function GET(request: NextRequest) {
           }
 
         } catch (error) {
-          console.warn(`验证失败 ${site.name}:`, error);
+          logger.warn(`验证失败 ${site.name}:`, error);
 
           // 发送源错误事件
           completedSources++;
@@ -166,7 +165,7 @@ export async function GET(request: NextRequest) {
               try {
                 controller.close();
               } catch (error) {
-                console.warn('Failed to close controller:', error);
+                logger.warn('Failed to close controller:', error);
               }
             }
           }
@@ -179,7 +178,7 @@ export async function GET(request: NextRequest) {
 
     cancel() {
       streamClosed = true;
-      console.log('Client disconnected, cancelling validation stream');
+      logger.debug('Client disconnected, cancelling validation stream');
     },
   });
 

@@ -1,11 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { AdminConfig } from '@/lib/admin.types';
 import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { logger } from '@/lib/logger';
 import { requireAuth } from '@/lib/require-auth';
+import { SearchResult } from '@/lib/types';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error('获取搜索建议失败', error);
+    logger.error('获取搜索建议失败', error);
     return NextResponse.json({ error: '获取搜索建议失败' }, { status: 500 });
   }
 }
@@ -65,8 +65,8 @@ async function generateSuggestions(config: AdminConfig, query: string, username:
     realKeywords = Array.from(
       new Set(
         results
-          .filter((r: any) => config.SiteConfig.DisableYellowFilter || !yellowWords.some((word: string) => (r.type_name || '').includes(word)))
-          .map((r: any) => r.title)
+          .filter((r: SearchResult) => config.SiteConfig.DisableYellowFilter || !yellowWords.some((word: string) => (r.type_name || '').includes(word)))
+          .map((r: SearchResult) => r.title)
           .filter(Boolean)
           .flatMap((title: string) => title.split(/[ -:：·、-]/))
           .filter(

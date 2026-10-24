@@ -1,8 +1,7 @@
-/* eslint-disable no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { collectBackup, packBackup } from '@/lib/backup';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 import { CURRENT_VERSION } from '@/lib/version';
 
@@ -37,7 +36,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('数据导出失败:', error);
+    logger.error('数据导出失败:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '导出失败' },
       { status: 500 }

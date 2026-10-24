@@ -1,9 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
 import { fetchDoubanData } from '@/lib/douban';
+import { logger } from '@/lib/logger';
 import { requireAuth } from '@/lib/require-auth';
 import { DoubanResult } from '@/lib/types';
 
@@ -53,7 +52,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: '缺少必要参数: kind' }, { status: 400 });
   }
 
-  const selectedCategories = { 类型: category } as any;
+  const selectedCategories: Record<string, string> = { 类型: category || '' };
   if (format) {
     selectedCategories['形式'] = format;
   }
@@ -95,7 +94,7 @@ export async function GET(request: NextRequest) {
   }
 
   const target = `${baseUrl}?${params.toString()}`;
-  console.log(target);
+  logger.debug(target);
   try {
     const doubanData = await fetchDoubanData<DoubanRecommendApiResponse>(
       target

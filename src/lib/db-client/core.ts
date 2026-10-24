@@ -1,4 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-empty-function */
+/* eslint-disable no-console, @typescript-eslint/no-empty-function */
 'use client';
 
 import { getAuthInfoFromBrowserCookie } from '../auth';
@@ -69,7 +69,7 @@ export const CACHE_EXPIRE_TIME = 60 * 60 * 1000; // 一小时缓存过期
 export const STORAGE_TYPE = (() => {
   const raw =
     (typeof window !== 'undefined' &&
-      (window as any).RUNTIME_CONFIG?.STORAGE_TYPE) ||
+      window.RUNTIME_CONFIG?.STORAGE_TYPE) ||
     (process.env.STORAGE_TYPE as
       | 'localstorage'
       | 'redis'
@@ -360,7 +360,7 @@ export class HybridCacheManager {
             // 检查是否有任何缓存数据过期
             let hasValidData = false;
             for (const [, cacheData] of Object.entries(cache)) {
-              if (cacheData && this.isCacheValid(cacheData as CacheData<any>)) {
+              if (cacheData && this.isCacheValid(cacheData as CacheData<unknown>)) {
                 hasValidData = true;
                 break;
               }
@@ -392,33 +392,38 @@ export const cacheManager = HybridCacheManager.getInstance();
  */
 export async function handleDatabaseOperationFailure(
   dataType: 'playRecords' | 'favorites' | 'searchHistory',
-  error: any
+  error: unknown
 ): Promise<void> {
   console.error(`数据库操作失败 (${dataType}):`, error);
   triggerGlobalError(`数据库操作失败`);
 
   try {
-    let freshData: any;
+    let freshData: unknown;
     let eventName: string;
 
     switch (dataType) {
       case 'playRecords':
-        freshData = await fetchFromApi<Record<string, PlayRecord>>(
-          `/api/playrecords`
-        );
-        cacheManager.cachePlayRecords(freshData);
+        {
+          const records = await fetchFromApi<Record<string, PlayRecord>>(`/api/playrecords`);
+          cacheManager.cachePlayRecords(records);
+          freshData = records;
+        }
         eventName = 'playRecordsUpdated';
         break;
       case 'favorites':
-        freshData = await fetchFromApi<Record<string, Favorite>>(
-          `/api/favorites`
-        );
-        cacheManager.cacheFavorites(freshData);
+        {
+          const favorites = await fetchFromApi<Record<string, Favorite>>(`/api/favorites`);
+          cacheManager.cacheFavorites(favorites);
+          freshData = favorites;
+        }
         eventName = 'favoritesUpdated';
         break;
       case 'searchHistory':
-        freshData = await fetchFromApi<string[]>(`/api/searchhistory`);
-        cacheManager.cacheSearchHistory(freshData);
+        {
+          const history = await fetchFromApi<string[]>(`/api/searchhistory`);
+          cacheManager.cacheSearchHistory(history);
+          freshData = history;
+        }
         eventName = 'searchHistoryUpdated';
         break;
     }

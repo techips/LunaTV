@@ -1,8 +1,8 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
-
 import { createClient, RedisClientType } from 'redis';
 
+import { globalSingleton } from './global-singleton';
 import { KvClient, KvStorage, withRetry } from './kv-storage';
+import { logger } from './logger';
 
 // 连接配置接口
 export interface RedisConnectionConfig {
@@ -12,21 +12,19 @@ export interface RedisConnectionConfig {
 
 // 创建客户端的工厂函数（进程内单例）
 export function createRedisClient(config: RedisConnectionConfig, globalSymbol: symbol): RedisClientType {
-  let client: RedisClientType | undefined = (global as any)[globalSymbol];
-
-  if (!client) {
+  return globalSingleton(globalSymbol, () => {
     if (!config.url) {
       throw new Error(`${config.clientName}_URL env variable not set`);
     }
 
-    client = createClient({
+    const client = createClient({
       url: config.url,
       socket: {
         // 重连策略：指数退避，最大30秒
         reconnectStrategy: (retries: number) => {
-          console.log(`${config.clientName} reconnection attempt ${retries + 1}`);
+          logger.debug(`${config.clientName} reconnection attempt ${retries + 1}`);
           if (retries > 10) {
-            console.error(`${config.clientName} max reconnection attempts exceeded`);
+            logger.error(`${config.clientName} max reconnection attempts exceeded`);
             return false;
           }
           return Math.min(1000 * Math.pow(2, retries), 30000);
@@ -38,28 +36,26 @@ export function createRedisClient(config: RedisConnectionConfig, globalSymbol: s
     }) as RedisClientType;
 
     client.on('error', (err) => {
-      console.error(`${config.clientName} client error:`, err);
+      logger.error(`${config.clientName} client error:`, err);
     });
     client.on('ready', () => {
-      console.log(`${config.clientName} ready`);
+      logger.info(`${config.clientName} ready`);
     });
 
     const connectWithRetry = async () => {
       try {
-        await client!.connect();
-        console.log(`${config.clientName} connected successfully`);
+        await client.connect();
+        logger.info(`${config.clientName} connected successfully`);
       } catch (err) {
-        console.error(`${config.clientName} initial connection failed:`, err);
-        console.log('Will retry in 5 seconds...');
+        logger.error(`${config.clientName} initial connection failed:`, err);
+        logger.info('Will retry in 5 seconds...');
         setTimeout(connectWithRetry, 5000);
       }
     };
     connectWithRetry();
 
-    (global as any)[globalSymbol] = client;
-  }
-
-  return client;
+    return client;
+  });
 }
 
 /** node-redis 适配器（Redis / Kvrocks 共用） */

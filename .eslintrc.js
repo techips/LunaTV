@@ -34,6 +34,7 @@ module.exports = {
         varsIgnorePattern: '^_',
         args: 'after-used',
         argsIgnorePattern: '^_',
+        caughtErrors: 'none',
       },
     ],
     //#endregion  //*======== Unused Import ===========
@@ -81,4 +82,14 @@ module.exports = {
     React: true,
     JSX: true,
   },
+  overrides: [
+    {
+      // 根目录的 CommonJS 配置 / 脚本文件
+      files: ['*.js', 'scripts/**/*.js'],
+      rules: {
+        '@typescript-eslint/no-require-imports': 'off',
+        '@typescript-eslint/no-var-requires': 'off',
+      },
+    },
+  ],
 };

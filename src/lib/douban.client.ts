@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console,no-case-declarations */
+/* eslint-disable no-console, no-case-declarations */
 
 import { DoubanItem, DoubanResult } from './types';
 
@@ -104,14 +104,14 @@ function getDoubanProxyConfig(): {
 } {
   const doubanProxyType =
     localStorage.getItem('doubanDataSource') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY_TYPE ||
+    window.RUNTIME_CONFIG?.DOUBAN_PROXY_TYPE ||
     'cmliussss-cdn-tencent';
   const doubanProxy =
     localStorage.getItem('doubanProxyUrl') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_PROXY ||
+    window.RUNTIME_CONFIG?.DOUBAN_PROXY ||
     '';
   return {
-    proxyType: doubanProxyType,
+    proxyType: doubanProxyType as ReturnType<typeof getDoubanProxyConfig>['proxyType'],
     proxyUrl: doubanProxy,
   };
 }
@@ -401,7 +401,7 @@ async function fetchDoubanRecommends(
     sort = '';
   }
 
-  const selectedCategories = { 类型: category } as any;
+  const selectedCategories: Record<string, string> = { 类型: category || '' };
   if (format) {
     selectedCategories['形式'] = format;
   }

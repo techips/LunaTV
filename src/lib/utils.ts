@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
+/* eslint-disable no-console */
 import he from 'he';
 import Hls from 'hls.js';
 
@@ -12,7 +12,7 @@ function getDoubanImageProxyConfig(): {
 } {
   let doubanImageProxyType =
     localStorage.getItem('doubanImageProxyType') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY_TYPE ||
+    window.RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY_TYPE ||
     'cmliussss-cdn-tencent';
   // 兼容历史数据：直连和豆瓣官方精品 CDN 统一使用服务器代理
   if (doubanImageProxyType === 'direct' || doubanImageProxyType === 'img3') {
@@ -20,10 +20,10 @@ function getDoubanImageProxyConfig(): {
   }
   const doubanImageProxy =
     localStorage.getItem('doubanImageProxyUrl') ||
-    (window as any).RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY ||
+    window.RUNTIME_CONFIG?.DOUBAN_IMAGE_PROXY ||
     '';
   return {
-    proxyType: doubanImageProxyType,
+    proxyType: doubanImageProxyType as ReturnType<typeof getDoubanImageProxyConfig>['proxyType'],
     proxyUrl: doubanImageProxy,
   };
 }
@@ -172,7 +172,7 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       });
 
       // 监听片段加载完成，只需首个分片即可计算速度
-      hls.on(Hls.Events.FRAG_LOADED, (event: any, data: any) => {
+      hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
         if (
           fragmentStartTime > 0 &&
           data &&
@@ -203,7 +203,7 @@ export async function getVideoResolutionFromM3u8(m3u8Url: string): Promise<{
       hls.attachMedia(video);
 
       // 监听hls.js错误
-      hls.on(Hls.Events.ERROR, (event: any, data: any) => {
+      hls.on(Hls.Events.ERROR, (_event, data) => {
         console.error('HLS错误:', data);
         if (data.fatal) {
           clearTimeout(timeout);

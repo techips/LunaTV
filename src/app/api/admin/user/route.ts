@@ -1,12 +1,16 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console,@typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { AdminConfig } from '@/lib/admin.types';
 import { updateConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth, revokeSessions } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
+
+type AdminUser = AdminConfig['UserConfig']['Users'][number];
 
 // 支持的操作类型
 const ACTIONS = [
@@ -86,13 +90,12 @@ export async function POST(request: NextRequest) {
     const result = await updateConfig(async (adminConfig) => {
       afterCommit = [];
       // 查找目标用户条目（用户组操作和批量操作不需要）
-      let targetEntry: any = null;
+      let targetEntry: AdminUser | null = null;
       let isTargetAdmin = false;
 
       if (!['userGroup', 'batchUpdateUserGroups'].includes(action) && targetUsername) {
-        targetEntry = adminConfig.UserConfig.Users.find(
-          (u) => u.username === targetUsername
-        );
+        targetEntry =
+          adminConfig.UserConfig.Users.find((u) => u.username === targetUsername) ?? null;
 
         if (
           targetEntry &&
@@ -123,7 +126,7 @@ export async function POST(request: NextRequest) {
           const { userGroup } = body as { userGroup?: string };
 
           // 更新配置
-          const newUser: any = {
+          const newUser: AdminUser = {
             username: targetUsername!,
             role: 'user',
           };
@@ -381,7 +384,7 @@ export async function POST(request: NextRequest) {
               adminConfig.UserConfig.Tags.splice(groupIndex, 1);
 
               // 记录删除操作的影响
-              console.log(`删除用户组 "${groupName}"，影响用户: ${affectedUsers.length > 0 ? affectedUsers.join(', ') : '无'}`);
+              logger.info(`删除用户组 "${groupName}"，影响用户: ${affectedUsers.length > 0 ? affectedUsers.join(', ') : '无'}`);
 
               break;
             }
@@ -468,7 +471,7 @@ export async function POST(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error('用户管理操作失败:', error);
+    logger.error('用户管理操作失败:', error);
     return NextResponse.json(
       {
         error: '用户管理操作失败',

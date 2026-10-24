@@ -1,8 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, no-console, @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
+import { logger } from './logger';
 
 export interface ApiSite {
   key: string;
@@ -239,7 +240,7 @@ async function getInitConfig(configFile: string, subConfig: {
   try {
     userNames = await db.getAllUsers();
   } catch (e) {
-    console.error('获取用户列表失败:', e);
+    logger.error('获取用户列表失败:', e);
   }
   const allUsers = userNames.filter((u) => u !== process.env.USERNAME).map((u) => ({
     username: u,
@@ -251,7 +252,7 @@ async function getInitConfig(configFile: string, subConfig: {
     role: 'owner',
     banned: false,
   });
-  adminConfig.UserConfig.Users = allUsers as any;
+  adminConfig.UserConfig.Users = allUsers as AdminConfig['UserConfig']['Users'];
 
   // 从配置文件中补充源信息
   Object.entries(cfgFile.api_site || []).forEach(([key, site]) => {
@@ -313,7 +314,7 @@ export async function getConfig(): Promise<AdminConfig> {
     try {
       adminConfig = await db.getAdminConfig();
     } catch (e) {
-      console.error('获取管理员配置失败:', e);
+      logger.error('获取管理员配置失败:', e);
       // 读库失败时回退到旧缓存，避免整站不可用
       if (cachedConfig) {
         cachedConfigAt = Date.now();
@@ -334,7 +335,7 @@ export async function getConfig(): Promise<AdminConfig> {
       try {
         await updateConfig(() => undefined);
       } catch (e) {
-        console.error('保存管理员配置失败:', e);
+        logger.error('保存管理员配置失败:', e);
       }
     }
     return cachedConfig;
@@ -347,11 +348,13 @@ export async function getConfig(): Promise<AdminConfig> {
 
 export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   // 字段名拼写修正迁移：ConfigSubscribtion → ConfigSubscription（兼容旧数据与旧备份）
-  const legacy = (adminConfig as any).ConfigSubscribtion;
+  const legacy = (adminConfig as unknown as Record<string, unknown>).ConfigSubscribtion as
+    | AdminConfig['ConfigSubscription']
+    | undefined;
   if (legacy && !adminConfig.ConfigSubscription) {
     adminConfig.ConfigSubscription = legacy;
   }
-  delete (adminConfig as any).ConfigSubscribtion;
+  delete (adminConfig as unknown as Record<string, unknown>).ConfigSubscribtion;
   if (!adminConfig.ConfigSubscription) {
     adminConfig.ConfigSubscription = { URL: '', AutoUpdate: false, LastCheck: '' };
   }
@@ -440,7 +443,7 @@ export async function resetConfig() {
   await updateConfig(async (current) => {
     const fresh = await getInitConfig(current.ConfigFile, current.ConfigSubscription);
     // 整体替换为初始配置（保留配置文件与订阅设置）
-    Object.keys(current).forEach((k) => delete (current as any)[k]);
+    Object.keys(current).forEach((k) => delete (current as unknown as Record<string, unknown>)[k]);
     Object.assign(current, fresh);
   });
 }

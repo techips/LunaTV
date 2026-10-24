@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { logger } from '@/lib/logger';
 import { requireAuth } from '@/lib/require-auth';
+import { SearchResult } from '@/lib/types';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
           return true;
         } catch (error) {
           // 控制器已关闭或出现其他错误
-          console.warn('Failed to enqueue data:', error);
+          logger.warn('Failed to enqueue data:', error);
           streamClosed = true;
           return false;
         }
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
 
       // 记录已完成的源数量
       let completedSources = 0;
-      const allResults: any[] = [];
+      const allResults: SearchResult[] = [];
 
       // 为每个源创建搜索 Promise
       const searchPromises = apiSites.map(async (site) => {
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
             ),
           ]);
 
-          const results = await searchPromise as any[];
+          const results = (await searchPromise) as SearchResult[];
 
           // 过滤黄色内容
           let filteredResults = results;
@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
           }
 
         } catch (error) {
-          console.warn(`搜索失败 ${site.name}:`, error);
+          logger.warn(`搜索失败 ${site.name}:`, error);
 
           // 发送源错误事件
           completedSources++;
@@ -155,7 +155,7 @@ export async function GET(request: NextRequest) {
               try {
                 controller.close();
               } catch (error) {
-                console.warn('Failed to close controller:', error);
+                logger.warn('Failed to close controller:', error);
               }
             }
           }
@@ -169,7 +169,7 @@ export async function GET(request: NextRequest) {
     cancel() {
       // 客户端断开连接时，标记流已关闭
       streamClosed = true;
-      console.log('Client disconnected, cancelling search stream');
+      logger.debug('Client disconnected, cancelling search stream');
     },
   });
 

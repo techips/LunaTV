@@ -1,5 +1,3 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
-
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { promisify } from 'util';
 import { gunzip, gzip } from 'zlib';
@@ -8,6 +6,7 @@ import { AdminConfig } from './admin.types';
 import { configSelfCheck } from './config';
 import { SimpleCrypto } from './crypto';
 import { db } from './db';
+import { logger } from './logger';
 import { isHashed } from './password';
 import { Favorite, PlayRecord, SkipConfig } from './types';
 
@@ -111,7 +110,7 @@ export async function packBackup(data: BackupData, password: string): Promise<st
 
 export async function unpackBackup(fileText: string, password: string): Promise<BackupData> {
   const compressed = decryptBackup(fileText, password);
-  let json: any;
+  let json: unknown;
   try {
     json = JSON.parse((await gunzipAsync(compressed)).toString());
   } catch {
@@ -121,12 +120,12 @@ export async function unpackBackup(fileText: string, password: string): Promise<
   return json as BackupData;
 }
 
-export function validateBackup(json: any): void {
-  const d = json?.data;
+export function validateBackup(json: unknown): void {
+  const d = (json as { data?: { adminConfig?: unknown; userData?: unknown } } | null)?.data;
   if (!d || typeof d !== 'object' || !d.adminConfig || typeof d.userData !== 'object') {
     throw new Error('备份文件格式无效');
   }
-  for (const [name, u] of Object.entries<any>(d.userData)) {
+  for (const [name, u] of Object.entries(d.userData as Record<string, Record<string, unknown>>)) {
     if (!name || /[\s:]/.test(name)) throw new Error(`备份中的用户名无效: ${name}`);
     for (const field of ['playRecords', 'favorites', 'skipConfigs'] as const) {
       if (u[field] !== undefined && (typeof u[field] !== 'object' || u[field] === null)) {
@@ -190,12 +189,12 @@ export async function restoreBackup(data: BackupData, serverVersion: string): Pr
   try {
     return await writeBackup(data);
   } catch (error) {
-    console.error('导入失败，正在回滚:', error);
+    logger.error('导入失败，正在回滚:', error);
     try {
       await db.clearAllData();
       await writeBackup(snapshot);
     } catch (rollbackError) {
-      console.error('回滚失败:', rollbackError);
+      logger.error('回滚失败:', rollbackError);
       throw new Error(`导入失败且回滚失败：${(error as Error).message}`);
     }
     throw new Error(`导入失败，已恢复为导入前的数据：${(error as Error).message}`);

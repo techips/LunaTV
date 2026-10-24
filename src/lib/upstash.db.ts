@@ -1,8 +1,8 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
-
 import { Redis } from '@upstash/redis';
 
+import { globalSingleton } from './global-singleton';
 import { KvClient, KvStorage, withRetry } from './kv-storage';
+import { logger } from './logger';
 
 /**
  * Upstash 适配器。
@@ -61,7 +61,7 @@ export class UpstashKv implements KvClient {
   async sAdd(key: string, members: string | string[]) {
     const list = Array.isArray(members) ? members : [members];
     if (list.length === 0) return;
-    await this.retry(() => (this.client as any).sadd(key, ...list));
+    await this.retry(() => this.client.sadd(key, list[0], ...list.slice(1)));
   }
   async sRem(key: string, member: string) {
     await this.retry(() => this.client.srem(key, member));
@@ -106,16 +106,14 @@ export class UpstashRedisStorage extends KvStorage {
 
 // 单例 Upstash Redis 客户端
 function getUpstashRedisClient(): Redis {
-  const globalKey = Symbol.for('__MOONTV_UPSTASH_REDIS_CLIENT__');
-  let client: Redis | undefined = (global as any)[globalKey];
-
-  if (!client) {
+  return globalSingleton(Symbol.for('__MOONTV_UPSTASH_REDIS_CLIENT__'), () => {
     const upstashUrl = process.env.UPSTASH_URL;
     const upstashToken = process.env.UPSTASH_TOKEN;
     if (!upstashUrl || !upstashToken) {
       throw new Error('UPSTASH_URL and UPSTASH_TOKEN env variables must be set');
     }
-    client = new Redis({
+    logger.info('Upstash Redis client created');
+    return new Redis({
       url: upstashUrl,
       token: upstashToken,
       automaticDeserialization: false,
@@ -124,9 +122,5 @@ function getUpstashRedisClient(): Redis {
         backoff: (retryCount: number) => Math.min(1000 * Math.pow(2, retryCount), 30000),
       },
     });
-    console.log('Upstash Redis client created successfully');
-    (global as any)[globalKey] = client;
-  }
-
-  return client;
+  });
 }

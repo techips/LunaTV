@@ -1,6 +1,5 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
-
 import { AdminConfig } from './admin.types';
+import { logger } from './logger';
 import { hashPassword, isHashed, verifyPassword } from './password';
 import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
 
@@ -40,7 +39,8 @@ export function withRetry(clientName: string, onRetry?: () => Promise<void>) {
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await operation();
-      } catch (err: any) {
+      } catch (e) {
+        const err = e as { message?: string; code?: string; name?: string };
         const isLastAttempt = i === maxRetries - 1;
         const isConnectionError =
           err?.message?.includes('Connection') ||
@@ -50,10 +50,10 @@ export function withRetry(clientName: string, onRetry?: () => Promise<void>) {
           err?.code === 'EPIPE' ||
           err?.name === 'UpstashError';
         if (!isConnectionError || isLastAttempt) throw err;
-        console.warn(`${clientName} 操作失败，重试 (${i + 1}/${maxRetries}):`, err.message);
+        logger.warn(`${clientName} 操作失败，重试 (${i + 1}/${maxRetries}):`, err.message);
         await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
         if (onRetry) {
-          await onRetry().catch((e) => console.error(`${clientName} 重连失败:`, e));
+          await onRetry().catch((e) => logger.error(`${clientName} 重连失败:`, e));
         }
       }
     }
@@ -327,7 +327,7 @@ export class KvStorage implements IStorage {
   async migrateData(): Promise<void> {
     const migrationKey = 'sys:migration:hash_v2';
     if ((await this.kv.get(migrationKey)) === 'done') return;
-    console.log('开始数据迁移：扁平 key → Hash 结构...');
+    logger.info('开始数据迁移：扁平 key → Hash 结构...');
     try {
       const kinds: [string, (u: string) => string][] = [
         ['pr', (u) => this.prHashKey(u)],
@@ -346,7 +346,7 @@ export class KvStorage implements IStorage {
           if (raw) await this.kv.hSet(hashKey(match[1]), match[2], raw);
           await this.kv.del(oldKey);
         }
-        if (keys.length > 0) console.log(`迁移了 ${keys.length} 条 ${kind} 数据`);
+        if (keys.length > 0) logger.info(`迁移了 ${keys.length} 条 ${kind} 数据`);
       }
 
       // 从 u:*:pwd 构建 sys:users 集合
@@ -356,14 +356,14 @@ export class KvStorage implements IStorage {
           .filter((u): u is string => typeof u === 'string');
         if (userNames.length > 0) {
           await this.kv.sAdd(this.usersSetKey(), userNames);
-          console.log(`迁移了 ${userNames.length} 个用户到 Set`);
+          logger.info(`迁移了 ${userNames.length} 个用户到 Set`);
         }
       }
 
       await this.kv.set(migrationKey, 'done');
-      console.log('数据迁移完成');
+      logger.info('数据迁移完成');
     } catch (error) {
-      console.error('数据迁移失败:', error);
+      logger.error('数据迁移失败:', error);
     }
   }
 
@@ -371,7 +371,7 @@ export class KvStorage implements IStorage {
   async migratePasswords(): Promise<void> {
     const migrationKey = 'sys:migration:pwd_hash_v1';
     if ((await this.kv.get(migrationKey)) === 'done') return;
-    console.log('开始密码迁移：明文 → 加盐哈希...');
+    logger.info('开始密码迁移：明文 → 加盐哈希...');
     try {
       let count = 0;
       for (const key of await this.kv.scanKeys('u:*:pwd')) {
@@ -381,9 +381,9 @@ export class KvStorage implements IStorage {
         count++;
       }
       await this.kv.set(migrationKey, 'done');
-      console.log(`密码迁移完成，共迁移 ${count} 个用户`);
+      logger.info(`密码迁移完成，共迁移 ${count} 个用户`);
     } catch (error) {
-      console.error('密码迁移失败:', error);
+      logger.error('密码迁移失败:', error);
     }
   }
 
@@ -393,9 +393,9 @@ export class KvStorage implements IStorage {
         await this.deleteUser(username);
       }
       await this.kv.del(this.adminConfigKey());
-      console.log('所有数据已清空');
+      logger.info('所有数据已清空');
     } catch (error) {
-      console.error('清空数据失败:', error);
+      logger.error('清空数据失败:', error);
       throw new Error('清空数据失败');
     }
   }

@@ -41,7 +41,7 @@ function SearchPageClient() {
   const flushTimerRef = useRef<number | null>(null);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
   // 聚合卡片 refs 与聚合统计缓存
-  const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle>>>(new Map());
+  const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle | null>>>(new Map());
   const groupStatsRef = useRef<Map<string, { douban_id?: number; episodes?: number; source_names: string[] }>>(new Map());
 
   const getGroupRef = (key: string) => {
@@ -338,7 +338,9 @@ function SearchPageClient() {
 
   useEffect(() => {
     // 无搜索参数时聚焦搜索框
-    !searchParams.get('q') && document.getElementById('searchInput')?.focus();
+    if (!searchParams.get('q')) {
+      document.getElementById('searchInput')?.focus();
+    }
 
     // 初始加载搜索历史
     getSearchHistory().then(setSearchHistory);

@@ -1,8 +1,7 @@
-/* eslint-disable no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { refineConfig, updateConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
@@ -47,7 +46,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, message: '配置文件更新成功' });
   } catch (error) {
-    console.error('更新配置文件失败:', error);
+    logger.error('更新配置文件失败:', error);
     return NextResponse.json(
       { error: '更新配置文件失败', details: (error as Error).message },
       { status: 500 }

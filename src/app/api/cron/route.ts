@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig, refineConfig, updateConfig } from '@/lib/config';
@@ -7,6 +5,7 @@ import { fetchSubscriptionConfig } from '@/lib/config-subscription';
 import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { refreshAllLiveSources } from '@/lib/live';
+import { logger } from '@/lib/logger';
 import { safeEqualHex } from '@/lib/server-secret';
 import { SearchResult } from '@/lib/types';
 
@@ -66,7 +65,7 @@ export async function GET(request: NextRequest) {
   lastRunAt = now;
   runningJob = cronJob()
     .catch((err) => {
-      console.error('Cron job failed:', err);
+      logger.error('Cron job failed:', err);
     })
     .finally(() => {
       runningJob = null;
@@ -80,7 +79,7 @@ export async function GET(request: NextRequest) {
 }
 
 async function cronJob() {
-  console.log('Cron job started:', new Date().toISOString());
+  logger.info('Cron job started:', new Date().toISOString());
   await refreshConfig();
   await refreshAllLiveSources();
   await refreshRecordAndFavorites();
@@ -90,7 +89,7 @@ async function refreshConfig() {
   const config = await getConfig();
   const sub = config.ConfigSubscription;
   if (!sub?.URL || !sub.AutoUpdate) {
-    console.log('跳过刷新：未配置订阅地址或自动更新');
+    logger.info('跳过刷新：未配置订阅地址或自动更新');
     return;
   }
   try {
@@ -102,7 +101,7 @@ async function refreshConfig() {
       refineConfig(cfg);
     });
   } catch (e) {
-    console.error('刷新配置失败:', (e as Error).message);
+    logger.error('刷新配置失败:', (e as Error).message);
   }
 }
 
@@ -140,7 +139,7 @@ async function refreshRecordAndFavorites() {
       let promise = detailCache.get(key);
       if (!promise) {
         promise = fetchVideoDetail({ source, id, fallbackTitle: fallbackTitle.trim() }).catch((err) => {
-          console.warn(`获取视频详情失败 (${key}):`, err.message);
+          logger.warn(`获取视频详情失败 (${key}):`, err.message);
           return null;
         });
         detailCache.set(key, promise);
@@ -172,9 +171,9 @@ async function refreshRecordAndFavorites() {
           }),
           5
         );
-        if (updated) console.log(`用户 ${user}：更新了 ${updated} 条播放记录`);
+        if (updated) logger.info(`用户 ${user}：更新了 ${updated} 条播放记录`);
       } catch (err) {
-        console.error(`处理播放记录失败 (${user}):`, err);
+        logger.error(`处理播放记录失败 (${user}):`, err);
       }
 
       // 收藏（直播收藏不需要刷新集数）
@@ -202,15 +201,15 @@ async function refreshRecordAndFavorites() {
             }),
           5
         );
-        if (updated) console.log(`用户 ${user}：更新了 ${updated} 条收藏`);
+        if (updated) logger.info(`用户 ${user}：更新了 ${updated} 条收藏`);
       } catch (err) {
-        console.error(`处理收藏失败 (${user}):`, err);
+        logger.error(`处理收藏失败 (${user}):`, err);
       }
     };
 
     await runWithConcurrency(users.map((u) => () => processUser(u)), 3);
-    console.log('刷新播放记录/收藏任务完成');
+    logger.info('刷新播放记录/收藏任务完成');
   } catch (err) {
-    console.error('刷新播放记录/收藏任务启动失败', err);
+    logger.error('刷新播放记录/收藏任务启动失败', err);
   }
 }

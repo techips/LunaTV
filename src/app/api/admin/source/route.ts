@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any,no-console */
-
 import { NextRequest, NextResponse } from 'next/server';
 
 import { updateConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth } from '@/lib/require-auth';
 
 export const runtime = 'nodejs';
@@ -21,7 +20,7 @@ export async function POST(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const body = (await request.json()) as BaseBody & Record<string, any>;
+    const body = (await request.json()) as BaseBody & Record<string, unknown>;
     const { action } = body;
 
     const username = auth.username;
@@ -213,7 +212,7 @@ export async function POST(request: NextRequest) {
       );
     });
   } catch (error) {
-    console.error('视频源管理操作失败:', error);
+    logger.error('视频源管理操作失败:', error);
     return NextResponse.json(
       {
         error: '视频源管理操作失败',

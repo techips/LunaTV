@@ -1,9 +1,9 @@
-/* eslint-disable no-console */
 import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 import {
   clientIp,
   loginRetryAfter,
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     try {
       pass = await db.verifyUser(username, password);
     } catch (err) {
-      console.error('数据库验证失败', err);
+      logger.error('数据库验证失败', err);
       return NextResponse.json({ error: '数据库错误' }, { status: 500 });
     }
     if (!pass) return fail();
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
     recordLoginSuccess(keys);
     return issueSession(req, username, user?.role === 'admin' ? 'admin' : 'user');
   } catch (error) {
-    console.error('登录接口异常', error);
+    logger.error('登录接口异常', error);
     return NextResponse.json({ error: '服务器错误' }, { status: 500 });
   }
 }

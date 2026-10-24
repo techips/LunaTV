@@ -1,9 +1,8 @@
-/* eslint-disable no-console */
-
 import { NextResponse } from 'next/server';
 
 import { fetchWithHeaderTimeout } from '@/lib/fetch-timeout';
 import { CORS_HEADERS, resolveProxyTarget } from '@/lib/live-proxy';
+import { logger } from '@/lib/logger';
 import { CachedSegment, getCachedSegment, getPendingSegment, teeIntoCache } from '@/lib/segment-cache';
 
 export const runtime = 'nodejs';
@@ -31,7 +30,7 @@ export async function GET(request: Request) {
       15000
     );
   } catch (error) {
-    console.warn('分片代理请求失败:', target.url, (error as Error).message);
+    logger.warn('分片代理请求失败:', target.url, (error as Error).message);
     return NextResponse.json({ error: 'Failed to fetch segment' }, { status: 502 });
   }
 

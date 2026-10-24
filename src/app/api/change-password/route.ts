@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
 import { rejectLocalStorage, requireAuth, revokeSessions } from '@/lib/require-auth';
 import { buildSessionCookies, isHttpsRequest } from '@/lib/session';
 
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
     return response;
   } catch (error) {
-    console.error('修改密码失败:', error);
+    logger.error('修改密码失败:', error);
     return NextResponse.json({ error: '修改密码失败' }, { status: 500 });
   }
 }
