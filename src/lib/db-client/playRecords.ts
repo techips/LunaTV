@@ -1,0 +1,210 @@
+/* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-empty-function */
+'use client';
+
+import {
+  cacheManager,
+  fetchFromApi,
+  fetchWithAuth,
+  generateStorageKey,
+  handleDatabaseOperationFailure,
+  PLAY_RECORDS_KEY,
+  PlayRecord,
+  STORAGE_TYPE,
+  triggerGlobalError,
+} from './core';
+
+// ---- API ----
+/**
+ * 读取全部播放记录。
+ * 非本地存储模式下使用混合缓存策略：优先返回缓存数据，后台异步同步最新数据。
+ * 在服务端渲染阶段 (window === undefined) 时返回空对象，避免报错。
+ */
+export async function getAllPlayRecords(): Promise<Record<string, PlayRecord>> {
+  // 服务器端渲染阶段直接返回空，交由客户端 useEffect 再行请求
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  // 数据库存储模式：使用混合缓存策略（包括 redis 和 upstash）
+  if (STORAGE_TYPE !== 'localstorage') {
+    // 优先从缓存获取数据
+    const cachedData = cacheManager.getCachedPlayRecords();
+
+    if (cachedData) {
+      // 返回缓存数据，同时后台异步更新
+      fetchFromApi<Record<string, PlayRecord>>(`/api/playrecords`)
+        .then((freshData) => {
+          // 只有数据真正不同时才更新缓存
+          if (JSON.stringify(cachedData) !== JSON.stringify(freshData)) {
+            cacheManager.cachePlayRecords(freshData);
+            // 触发数据更新事件，供组件监听
+            window.dispatchEvent(
+              new CustomEvent('playRecordsUpdated', {
+                detail: freshData,
+              })
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn('后台同步播放记录失败:', err);
+          triggerGlobalError('后台同步播放记录失败');
+        });
+
+      return cachedData;
+    } else {
+      // 缓存为空，直接从 API 获取并缓存
+      try {
+        const freshData = await fetchFromApi<Record<string, PlayRecord>>(
+          `/api/playrecords`
+        );
+        cacheManager.cachePlayRecords(freshData);
+        return freshData;
+      } catch (err) {
+        console.error('获取播放记录失败:', err);
+        triggerGlobalError('获取播放记录失败');
+        return {};
+      }
+    }
+  }
+
+  // localstorage 模式
+  try {
+    const raw = localStorage.getItem(PLAY_RECORDS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, PlayRecord>;
+  } catch (err) {
+    console.error('读取播放记录失败:', err);
+    triggerGlobalError('读取播放记录失败');
+    return {};
+  }
+}
+
+/**
+ * 保存播放记录。
+ * 数据库存储模式下使用乐观更新：先更新缓存（立即生效），再异步同步到数据库。
+ */
+export async function savePlayRecord(
+  source: string,
+  id: string,
+  record: PlayRecord
+): Promise<void> {
+  const key = generateStorageKey(source, id);
+
+  // 数据库存储模式：乐观更新策略（包括 redis 和 upstash）
+  if (STORAGE_TYPE !== 'localstorage') {
+    // 立即更新缓存
+    const cachedRecords = cacheManager.getCachedPlayRecords() || {};
+    cachedRecords[key] = record;
+    cacheManager.cachePlayRecords(cachedRecords);
+
+    // 触发立即更新事件
+    window.dispatchEvent(
+      new CustomEvent('playRecordsUpdated', {
+        detail: cachedRecords,
+      })
+    );
+
+    // 异步同步到数据库
+    try {
+      await fetchWithAuth('/api/playrecords', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key, record }),
+      });
+    } catch (err) {
+      await handleDatabaseOperationFailure('playRecords', err);
+      triggerGlobalError('保存播放记录失败');
+      throw err;
+    }
+    return;
+  }
+
+  // localstorage 模式
+  if (typeof window === 'undefined') {
+    console.warn('无法在服务端保存播放记录到 localStorage');
+    return;
+  }
+
+  try {
+    const allRecords = await getAllPlayRecords();
+    allRecords[key] = record;
+    localStorage.setItem(PLAY_RECORDS_KEY, JSON.stringify(allRecords));
+    window.dispatchEvent(
+      new CustomEvent('playRecordsUpdated', {
+        detail: allRecords,
+      })
+    );
+  } catch (err) {
+    console.error('保存播放记录失败:', err);
+    triggerGlobalError('保存播放记录失败');
+    throw err;
+  }
+}
+
+/**
+ * 删除播放记录。
+ * 数据库存储模式下使用乐观更新：先更新缓存，再异步同步到数据库。
+ */
+export async function deletePlayRecord(
+  source: string,
+  id: string
+): Promise<void> {
+  const key = generateStorageKey(source, id);
+
+  // 数据库存储模式：乐观更新策略（包括 redis 和 upstash）
+  if (STORAGE_TYPE !== 'localstorage') {
+    // 立即更新缓存
+    const cachedRecords = cacheManager.getCachedPlayRecords() || {};
+    delete cachedRecords[key];
+    cacheManager.cachePlayRecords(cachedRecords);
+
+    // 触发立即更新事件
+    window.dispatchEvent(
+      new CustomEvent('playRecordsUpdated', {
+        detail: cachedRecords,
+      })
+    );
+
+    // 异步同步到数据库
+    try {
+      await fetchWithAuth(`/api/playrecords?key=${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      await handleDatabaseOperationFailure('playRecords', err);
+      triggerGlobalError('删除播放记录失败');
+      throw err;
+    }
+    return;
+  }
+
+  // localstorage 模式
+  if (typeof window === 'undefined') {
+    console.warn('无法在服务端删除播放记录到 localStorage');
+    return;
+  }
+
+  try {
+    const allRecords = await getAllPlayRecords();
+    delete allRecords[key];
+    localStorage.setItem(PLAY_RECORDS_KEY, JSON.stringify(allRecords));
+    window.dispatchEvent(
+      new CustomEvent('playRecordsUpdated', {
+        detail: allRecords,
+      })
+    );
+  } catch (err) {
+    console.error('删除播放记录失败:', err);
+    triggerGlobalError('删除播放记录失败');
+    throw err;
+  }
+}
+
+/* ---------------- 搜索历史相关 API ---------------- */
+
+/**
+ * 获取搜索历史。
+ * 数据库存储模式下使用混合缓存策略：优先返回缓存数据，后台异步同步最新数据。
+ */

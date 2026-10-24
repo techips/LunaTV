@@ -8,7 +8,7 @@ const nextConfig = {
   },
 
   reactStrictMode: false,
-  swcMinify: false,
+  swcMinify: true,
 
   experimental: {
     instrumentationHook: process.env.NODE_ENV === 'production',

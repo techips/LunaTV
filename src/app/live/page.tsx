@@ -4,7 +4,7 @@
 
 import Artplayer from 'artplayer';
 import Hls from 'hls.js';
-import { Heart, Radio, Tv } from 'lucide-react';
+import { Radio, Tv } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState } from 'react';
 
@@ -15,9 +15,11 @@ import {
   saveFavorite,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { createLiveLoader } from '@/lib/hls-loaders';
 import { parseCustomTimeFormat } from '@/lib/time';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
+import FavoriteIcon from '@/components/FavoriteIcon';
 import PageLayout from '@/components/PageLayout';
 
 // 扩展 HTMLVideoElement 类型以支持 hls 属性
@@ -85,6 +87,10 @@ function LivePageClient() {
   const [videoUrl, setVideoUrl] = useState('');
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [unsupportedType, setUnsupportedType] = useState<string | null>(null);
+  // 播放失败原因（例如浏览器不支持的编码），显示在播放器上而不是黑屏
+  const [playbackIssue, setPlaybackIssue] = useState<{ title: string; detail: string } | null>(null);
+  // HDR 节目在非 HDR 显示器上会偏暗，给出提示
+  const [hdrNotice, setHdrNotice] = useState(false);
 
   // 切换直播源状态
   const [isSwitchingSource, setIsSwitchingSource] = useState(false);
@@ -295,7 +301,7 @@ function LivePageClient() {
       setIsVideoLoading(true);
 
       // 从 cachedLiveChannels 获取频道信息
-      const response = await fetch(`/api/live/channels?source=${source.key}`);
+      const response = await fetch(`/api/live/channels?source=${encodeURIComponent(source.key)}`);
       if (!response.ok) {
         throw new Error('获取频道列表失败');
       }
@@ -473,7 +479,7 @@ function LivePageClient() {
     if (channel.tvgId && currentSource) {
       try {
         setIsEpgLoading(true); // 开始加载 EPG 数据
-        const response = await fetch(`/api/live/epg?source=${currentSource.key}&tvgId=${channel.tvgId}`);
+        const response = await fetch(`/api/live/epg?source=${encodeURIComponent(currentSource.key)}&tvgId=${encodeURIComponent(channel.tvgId)}`);
         if (response.ok) {
           const result = await response.json();
           if (result.success) {
@@ -668,7 +674,7 @@ function LivePageClient() {
             title: currentChannelRef.current.name,
             source_name: currentSourceRef.current.name,
             year: '',
-            cover: `/api/proxy/logo?url=${encodeURIComponent(currentChannelRef.current.logo)}&source=${currentSourceRef.current.key}`,
+            cover: `/api/proxy/logo?url=${encodeURIComponent(currentChannelRef.current.logo)}&source=${encodeURIComponent(currentSourceRef.current.key)}`,
             total_episodes: 1,
             save_time: Date.now(),
             search_title: '',
@@ -757,45 +763,7 @@ function LivePageClient() {
     }
   }, [selectedGroup, groupedChannels]);
 
-  class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
-    constructor(config: any) {
-      super(config);
-      const load = this.load.bind(this);
-      this.load = function (context: any, config: any, callbacks: any) {
-        // 所有的请求都带一个 source 参数
-        // 代理返回的播放列表使用站内相对地址，这里补上 origin 再解析
-        try {
-          const url = new URL(context.url, window.location.origin);
-          url.searchParams.set('moontv-source', currentSourceRef.current?.key || '');
-          context.url = url.toString();
-        } catch (error) {
-          // ignore
-        }
-        // 拦截manifest和level请求
-        if (
-          (context as any).type === 'manifest' ||
-          (context as any).type === 'level'
-        ) {
-          // 判断是否浏览器直连
-          const isLiveDirectConnectStr = localStorage.getItem('liveDirectConnect');
-          const isLiveDirectConnect = isLiveDirectConnectStr === 'true';
-          if (isLiveDirectConnect) {
-            // 浏览器直连，使用 URL 对象处理参数
-            try {
-              const url = new URL(context.url, window.location.origin);
-              url.searchParams.set('allowCORS', 'true');
-              context.url = url.toString();
-            } catch (error) {
-              // 如果 URL 解析失败，回退到字符串拼接
-              context.url = context.url + '&allowCORS=true';
-            }
-          }
-        }
-        // 执行原始load方法
-        load(context, config, callbacks);
-      };
-    }
-  }
+  const CustomHlsJsLoader = createLiveLoader(Hls, () => currentSourceRef.current?.key || '');
 
   function m3u8Loader(video: HTMLVideoElement, url: string) {
     if (!Hls) {
@@ -816,7 +784,8 @@ function LivePageClient() {
     const hls = new Hls({
       debug: false,
       enableWorker: true,
-      lowLatencyMode: true,
+      // 普通直播（非 LL-HLS）开低延迟模式没有收益，反而缓冲更少、更容易卡
+      lowLatencyMode: false,
       maxBufferLength: 30,
       backBufferLength: 30,
       maxBufferSize: 60 * 1000 * 1000,
@@ -827,21 +796,58 @@ function LivePageClient() {
     hls.attachMedia(video);
     video.hls = hls;
 
+    hls.on(Hls.Events.MANIFEST_PARSED, function (_event: any, data: any) {
+      const levels: any[] = data?.levels || [];
+      const hdrStream =
+        levels.some((l) => l.videoRange && l.videoRange !== 'SDR') ||
+        /HDR|HLG|杜比视界/i.test(currentChannelRef.current?.name || '');
+      const hdrDisplay =
+        typeof window !== 'undefined' && window.matchMedia?.('(dynamic-range: high)').matches;
+      setHdrNotice(hdrStream && !hdrDisplay);
+    });
+
+    let mediaRecoveries = 0;
     hls.on(Hls.Events.ERROR, function (event: any, data: any) {
       console.error('HLS Error:', event, data);
 
-      if (data.fatal) {
-        switch (data.type) {
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            hls.startLoad();
-            break;
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            // hls.recoverMediaError();
-            break;
-          default:
+      if (!data.fatal) return;
+      switch (data.type) {
+        case Hls.ErrorTypes.NETWORK_ERROR:
+          hls.startLoad();
+          break;
+        case Hls.ErrorTypes.MEDIA_ERROR: {
+          const details = String(data.details || '');
+          if (details === 'bufferAddCodecError' || details === 'manifestIncompatibleCodecsError') {
+            const mime = String(data.mimeType || data.error?.message || '');
+            const audioMain = /mp4a\.40\.1\b/.test(mime);
+            setPlaybackIssue({
+              title: '浏览器不支持该频道的编码格式',
+              detail: audioMain
+                ? '这条线路的音频是 AAC Main，Chrome / Edge 无法播放。请换一条线路，或使用 Safari、APTV、VLC 等播放器。'
+                : `当前浏览器无法解码此线路（${mime || details}）。请换一条线路，或使用其他播放器。`,
+            });
             hls.destroy();
+            setIsVideoLoading(false);
             break;
+          }
+          // 先尝试恢复，再尝试切换音频编码，仍失败则提示
+          if (mediaRecoveries === 0) {
+            mediaRecoveries++;
+            hls.recoverMediaError();
+          } else if (mediaRecoveries === 1) {
+            mediaRecoveries++;
+            hls.swapAudioCodec();
+            hls.recoverMediaError();
+          } else {
+            setPlaybackIssue({ title: '播放出错', detail: `媒体解码失败（${details}），请换一条线路试试。` });
+            hls.destroy();
+            setIsVideoLoading(false);
+          }
+          break;
         }
+        default:
+          hls.destroy();
+          break;
       }
     });
   }
@@ -868,10 +874,16 @@ function LivePageClient() {
 
       // precheck type
       let type = 'm3u8';
-      const precheckUrl = `/api/live/precheck?url=${encodeURIComponent(videoUrl)}&moontv-source=${currentSourceRef.current?.key || ''}`;
+      const precheckUrl = `/api/live/precheck?url=${encodeURIComponent(videoUrl)}&moontv-source=${encodeURIComponent(currentSourceRef.current?.key || '')}`;
       const precheckResponse = await fetch(precheckUrl);
       if (!precheckResponse.ok) {
-        console.error('预检查失败:', precheckResponse.statusText);
+        const info = await precheckResponse.json().catch(() => ({}));
+        console.error('预检查失败:', precheckResponse.statusText, info);
+        setPlaybackIssue({
+          title: '无法连接到直播源',
+          detail: info?.message || info?.error || `预检查失败（HTTP ${precheckResponse.status}），请换一条线路试试。`,
+        });
+        setIsVideoLoading(false);
         return;
       }
       const precheckResult = await precheckResponse.json();
@@ -886,11 +898,13 @@ function LivePageClient() {
         return;
       }
 
-      // 重置不支持的类型
+      // 重置不支持的类型与上一次的播放提示
       setUnsupportedType(null);
+      setPlaybackIssue(null);
+      setHdrNotice(false);
 
       const customType = { m3u8: m3u8Loader };
-      const targetUrl = `/api/proxy/m3u8?url=${encodeURIComponent(videoUrl)}&moontv-source=${currentSourceRef.current?.key || ''}`;
+      const targetUrl = `/api/proxy/m3u8?url=${encodeURIComponent(videoUrl)}&moontv-source=${encodeURIComponent(currentSourceRef.current?.key || '')}`;
       try {
         // 创建新的播放器实例
         Artplayer.USE_RAF = false;
@@ -1279,6 +1293,32 @@ function LivePageClient() {
                   </div>
                 )}
 
+                {/* 播放失败原因 */}
+                {playbackIssue && !unsupportedType && (
+                  <div className='absolute inset-0 bg-black/90 rounded-xl flex items-center justify-center z-[600]'>
+                    <div className='text-center max-w-md mx-auto px-6 space-y-3'>
+                      <div className='text-4xl'>⚠️</div>
+                      <h3 className='text-lg font-semibold text-white'>{playbackIssue.title}</h3>
+                      <p className='text-sm text-gray-300'>{playbackIssue.detail}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* HDR 提示 */}
+                {hdrNotice && !playbackIssue && (
+                  <div className='absolute top-3 left-3 right-3 sm:right-auto z-[550] flex items-start gap-2 rounded-lg bg-black/70 px-3 py-2 text-xs text-amber-200'>
+                    <span>HDR 节目：当前显示器未开启 HDR，画面会偏暗。可在系统显示设置中开启 HDR，或换用 1080P 线路。</span>
+                    <button
+                      type='button'
+                      className='text-white/70 hover:text-white'
+                      onClick={() => setHdrNotice(false)}
+                      aria-label='关闭提示'
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 {/* 视频加载蒙层 */}
                 {isVideoLoading && (
                   <div className='absolute inset-0 bg-black/85 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/0 dark:border-white/30 flex items-center justify-center z-[500] transition-all duration-300'>
@@ -1425,7 +1465,7 @@ function LivePageClient() {
                                 <div className='w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden'>
                                   {channel.logo ? (
                                     <img
-                                      src={`/api/proxy/logo?url=${encodeURIComponent(channel.logo)}&source=${currentSource?.key || ''}`}
+                                      src={`/api/proxy/logo?url=${encodeURIComponent(channel.logo)}&source=${encodeURIComponent(currentSource?.key || '')}`}
                                       alt={channel.name}
                                       className='w-full h-full rounded object-contain'
                                       loading="lazy"
@@ -1533,7 +1573,7 @@ function LivePageClient() {
                   <div className='w-20 h-20 bg-gray-300 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden'>
                     {currentChannel.logo ? (
                       <img
-                        src={`/api/proxy/logo?url=${encodeURIComponent(currentChannel.logo)}&source=${currentSource?.key || ''}`}
+                        src={`/api/proxy/logo?url=${encodeURIComponent(currentChannel.logo)}&source=${encodeURIComponent(currentSource?.key || '')}`}
                         alt={currentChannel.name}
                         className='w-full h-full rounded object-contain'
                         loading="lazy"
@@ -1580,30 +1620,6 @@ function LivePageClient() {
 }
 
 // FavoriteIcon 组件
-const FavoriteIcon = ({ filled }: { filled: boolean }) => {
-  if (filled) {
-    return (
-      <svg
-        className='h-6 w-6'
-        viewBox='0 0 24 24'
-        xmlns='http://www.w3.org/2000/svg'
-      >
-        <path
-          d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'
-          fill='#ef4444' /* Tailwind red-500 */
-          stroke='#ef4444'
-          strokeWidth='2'
-          strokeLinecap='round'
-          strokeLinejoin='round'
-        />
-      </svg>
-    );
-  }
-  return (
-    <Heart className='h-6 w-6 stroke-[1] text-gray-600 dark:text-gray-300' />
-  );
-};
-
 export default function LivePage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
