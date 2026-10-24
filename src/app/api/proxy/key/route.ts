@@ -1,47 +1,33 @@
-/* eslint-disable no-console,@typescript-eslint/no-explicit-any */
+import { NextResponse } from 'next/server';
 
-import { NextResponse } from "next/server";
-
-import { getConfig } from "@/lib/config";
+import { fetchWithTimeout } from '@/lib/fetch-timeout';
+import { CORS_HEADERS, resolveProxyTarget } from '@/lib/live-proxy';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const url = searchParams.get('url');
-  const source = searchParams.get('moontv-source');
-  if (!url) {
-    return NextResponse.json({ error: 'Missing url' }, { status: 400 });
-  }
-
-  const config = await getConfig();
-  const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
-  if (!liveSource) {
-    return NextResponse.json({ error: 'Source not found' }, { status: 404 });
-  }
-  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
+  const target = await resolveProxyTarget(request, 'signed-only');
+  if (target instanceof NextResponse) return target;
 
   try {
-    const decodedUrl = url;
-    console.log(decodedUrl);
-    const response = await fetch(decodedUrl, {
-      headers: {
-        'User-Agent': ua,
-      },
-    });
+    const response = await fetchWithTimeout(
+      target.url,
+      { headers: { 'User-Agent': target.ua } },
+      10000
+    );
     if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch key' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to fetch key' }, { status: 502 });
     }
     const keyData = await response.arrayBuffer();
     return new Response(keyData, {
       headers: {
+        ...CORS_HEADERS,
         'Content-Type': 'application/octet-stream',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Cache-Control': 'public, max-age=3600'
+        // 密钥只给当前会话用，不进入共享缓存
+        'Cache-Control': 'private, max-age=3600',
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to fetch key' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch key' }, { status: 502 });
   }
 }
