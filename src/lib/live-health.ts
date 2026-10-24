@@ -88,10 +88,13 @@ function isStreamType(ct: string): boolean {
 /**
  * 检查一条线路是否可用。
  *
- * 只发 HEAD 判断：直播的 TS / FLV 是不会结束的流，GET 之后即使立刻断开，
+ * 先发 HEAD：直播的 TS / FLV 是不会结束的流，GET 之后即使立刻断开，
  * 经过 Docker Desktop 代理等中间层时上游连接也可能不会关闭，导致持续下载。
- * 因此只有确认是播放列表（小文件）时才会 GET；视频流根据响应头判定可用；
- * HEAD 不被支持且地址也不像播放列表时，不做判断（返回 null，不标记失效）。
+ * - HEAD 返回视频类型：直接判定可用，不下载。
+ * - HEAD 正常但类型不明、地址也不像播放列表：服务器在线，按可用处理。
+ * - 其余情况（是播放列表，或服务器不接受 HEAD）：用带 Range 的 GET 读开头一小段判断。
+ *   支持 Range 的服务器最多返回 64KB；不支持 Range 又返回视频流时立即断开、不读内容。
+ * 无法判断时返回 null（不标记失效）。
  */
 export async function checkLine(url: string, ua: string): Promise<LineHealth | null> {
   const t0 = Date.now();
@@ -101,45 +104,52 @@ export async function checkLine(url: string, ua: string): Promise<LineHealth | n
     checkedAt: Date.now(),
     reason,
   });
+  const failed = (error: unknown) =>
+    done('down', (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message);
   const headers = { 'User-Agent': ua };
 
   let head: Response;
   try {
     head = await fetchWithHeaderTimeout(url, { method: 'HEAD', redirect: 'follow', headers }, 8000);
   } catch (error) {
-    return done('down', (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message);
+    return failed(error);
   }
 
-  const ct = head.headers.get('content-type') || '';
+  const headType = head.headers.get('content-type') || '';
   const finalUrl = head.url || url;
-  const headUnsupported = head.status === 405 || head.status === 501;
+  if (head.ok && isStreamType(headType)) return done('ok');
+  const playlistPath = PLAYLIST_PATH_RE.test(new URL(finalUrl).pathname);
+  if (head.ok && !isPlaylistType(headType) && !playlistPath) return done('ok');
 
-  if (!head.ok && !headUnsupported) return done('down', `HTTP ${head.status}`);
-  if (head.ok && isStreamType(ct)) return done('ok');
+  // 很多动态地址（跳转服务、直播转播）不接受 HEAD，但 GET 正常，所以 HEAD 失败不直接判失效
+  let res: Response;
+  try {
+    res = await fetchWithHeaderTimeout(
+      finalUrl,
+      { redirect: 'follow', headers: { ...headers, Range: 'bytes=0-65535' } },
+      8000
+    );
+  } catch (error) {
+    return failed(error);
+  }
+  if (!res.ok) {
+    res.body?.cancel().catch(() => undefined);
+    return done('down', `HTTP ${res.status}`);
+  }
 
-  const looksLikePlaylist = (head.ok && isPlaylistType(ct)) || PLAYLIST_PATH_RE.test(new URL(finalUrl).pathname);
-  if (!looksLikePlaylist) {
-    // HEAD 正常但类型不明（例如 octet-stream）：服务器在线，按可用处理，不去下载
+  const getType = res.headers.get('content-type') || '';
+  if (isStreamType(getType)) {
+    res.body?.cancel().catch(() => undefined);
+    return done('ok');
+  }
+  const bounded = res.status === 206 || isPlaylistType(getType) || playlistPath;
+  if (!bounded) {
+    // 不支持 Range、类型也不明：可能是流，不读内容
+    res.body?.cancel().catch(() => undefined);
     return head.ok ? done('ok') : null;
   }
-
-  try {
-    const res = await fetchWithHeaderTimeout(finalUrl, { headers }, 8000);
-    if (!res.ok) {
-      res.body?.cancel().catch(() => undefined);
-      return done('down', `HTTP ${res.status}`);
-    }
-    // 防御：GET 拿到的其实是视频流时不读内容
-    const getType = res.headers.get('content-type') || '';
-    if (isStreamType(getType)) {
-      res.body?.cancel().catch(() => undefined);
-      return done('ok');
-    }
-    const verdict = classifyHead(await readHead(res));
-    return done(verdict.ok ? 'ok' : 'down', verdict.reason);
-  } catch (error) {
-    return done('down', (error as Error).name === 'TimeoutError' ? '超时' : (error as Error).message);
-  }
+  const verdict = classifyHead(await readHead(res));
+  return done(verdict.ok ? 'ok' : 'down', verdict.reason);
 }
 
 async function runPool<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {

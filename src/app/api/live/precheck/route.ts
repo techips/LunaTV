@@ -27,34 +27,27 @@ function typeFromUrl(url: string): StreamType {
 /**
  * 判断直播流类型。只发 HEAD、不读响应体：FLV / TS 直播流不会结束，
  * GET 后即使立即断开，经过代理时上游下载也可能不会停止。
- * HEAD 不可用或类型不明时按地址后缀判断，默认当作 HLS。
+ * HEAD 失败或类型不明时按地址后缀判断，默认当作 HLS；能不能播由后续的播放列表请求决定。
  */
 export async function GET(request: NextRequest) {
   const target = await resolveProxyTarget(request, 'channel');
   if (target instanceof NextResponse) return target;
 
+  // 很多服务器不接受 HEAD（403/404/405），这时按地址后缀猜测类型，交给 m3u8 代理的 GET 去判断，
+  // 不能因为 HEAD 失败就阻止播放
+  let headType: StreamType | null = null;
+  let finalUrl = target.url;
   try {
     const head = await fetchWithHeaderTimeout(
       target.url,
       { method: 'HEAD', redirect: 'follow', headers: { 'User-Agent': target.ua } },
       10000
     );
-
-    if (!head.ok && head.status !== 405 && head.status !== 501) {
-      return NextResponse.json(
-        { error: 'Failed to fetch', message: `上游返回 ${head.status}` },
-        { status: 502 }
-      );
-    }
-
-    const type =
-      (head.ok && typeFromContentType(head.headers.get('content-type') || '')) ||
-      typeFromUrl(head.url || target.url);
-    return NextResponse.json({ success: true, type });
-  } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to fetch', message: (error as Error).message },
-      { status: 502 }
-    );
+    finalUrl = head.url || target.url;
+    if (head.ok) headType = typeFromContentType(head.headers.get('content-type') || '');
+  } catch {
+    // 网络错误同样交给后续播放请求处理并提示
   }
+  return NextResponse.json({ success: true, type: headType || typeFromUrl(finalUrl) });
 }
+

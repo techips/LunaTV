@@ -75,11 +75,32 @@ describe('线路检查不会打开视频流', () => {
     expect(h?.reason).toBe('播放列表为空');
   });
 
-  it('不支持 HEAD 且地址不像播放列表：不判断、不下载', async () => {
+  it('服务器拒绝 HEAD（404）但 Range GET 返回播放列表：判定可用', async () => {
+    const url = 'http://a.example/douyu/5061550';
+    const calls = mockFetch({
+      [`HEAD ${url}`]: { status: 404 },
+      [`GET ${url}`]: { status: 206, type: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n#EXTINF:5,\na.ts\n' },
+    });
+    expect((await checkLine(url, UA))?.state).toBe('ok');
+    expect(calls).toEqual([`HEAD ${url}`, `GET ${url}`]);
+  });
+
+  it('HEAD 与 GET 都失败才判定失效', async () => {
+    const url = 'http://a.example/gone/1';
+    mockFetch({ [`HEAD ${url}`]: { status: 404 }, [`GET ${url}`]: { status: 404 } });
+    const h = await checkLine(url, UA);
+    expect(h?.state).toBe('down');
+    expect(h?.reason).toBe('HTTP 404');
+  });
+
+  it('拒绝 HEAD、不支持 Range 且类型不明：不读内容、不判断', async () => {
     const url = 'http://a.example/live/123';
-    const calls = mockFetch({ [`HEAD ${url}`]: { status: 405 } });
+    const calls = mockFetch({
+      [`HEAD ${url}`]: { status: 405 },
+      [`GET ${url}`]: { status: 200, type: 'application/octet-stream', body: 'xxxx' },
+    });
     expect(await checkLine(url, UA)).toBeNull();
-    expect(calls).toEqual([`HEAD ${url}`]);
+    expect(calls).toHaveLength(2);
   });
 
   it('不支持 HEAD 但地址是 .m3u8：GET 检查', async () => {
@@ -104,7 +125,7 @@ describe('线路检查不会打开视频流', () => {
 
   it('上游 404 判定为失效', async () => {
     const url = 'http://a.example/gone.m3u8';
-    mockFetch({ [`HEAD ${url}`]: { status: 404 } });
+    mockFetch({ [`HEAD ${url}`]: { status: 404 }, [`GET ${url}`]: { status: 404 } });
     const h = await checkLine(url, UA);
     expect(h?.state).toBe('down');
     expect(h?.reason).toBe('HTTP 404');
