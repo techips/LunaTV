@@ -944,7 +944,7 @@ export const UserMenu: React.FC = () => {
                   IPTV 视频浏览器直连
                 </h4>
                 <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                  开启 IPTV 视频浏览器直连时，需要自备 Allow CORS 插件
+                  仅适合部署在远程服务器时节省服务器带宽；需要自备 Allow CORS 插件（会降低浏览器安全性），本机部署建议关闭
                 </p>
               </div>
               <label className='flex items-center cursor-pointer'>

@@ -5,6 +5,7 @@ import { fetchSubscriptionConfig } from '@/lib/config-subscription';
 import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { refreshAllLiveSources } from '@/lib/live';
+import { checkSourceHealth } from '@/lib/live-health';
 import { logger } from '@/lib/logger';
 import { safeEqualHex } from '@/lib/server-secret';
 import { SearchResult } from '@/lib/types';
@@ -82,7 +83,21 @@ async function cronJob() {
   logger.info('Cron job started:', new Date().toISOString());
   await refreshConfig();
   await refreshAllLiveSources();
+  await checkAllLineHealth();
   await refreshRecordAndFavorites();
+}
+
+// 线路健康检查：可通过 LIVE_HEALTH_CHECK=false 关闭
+async function checkAllLineHealth() {
+  if (process.env.LIVE_HEALTH_CHECK === 'false') return;
+  const config = await getConfig();
+  for (const live of config.LiveConfig.filter((l) => !l.disabled)) {
+    try {
+      await checkSourceHealth(live.key, live.ua);
+    } catch (e) {
+      logger.error(`线路检查失败 [${live.key}]:`, (e as Error).message);
+    }
+  }
 }
 
 async function refreshConfig() {

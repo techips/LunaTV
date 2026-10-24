@@ -49,6 +49,9 @@ export const LiveSourceConfig = ({
   const [editingLiveSource, setEditingLiveSource] = useState<LiveDataSource | null>(null);
   const [orderChanged, setOrderChanged] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // 托管列表：直接在后台粘贴 / 上传 m3u 内容
+  const [showHostedForm, setShowHostedForm] = useState(false);
+  const [hosted, setHosted] = useState({ key: '', name: '', epg: '', content: '' });
   const [newLiveSource, setNewLiveSource] = useState<LiveDataSource>({
     name: '',
     key: '',
@@ -145,6 +148,70 @@ export const LiveSourceConfig = ({
         throw err;
       } finally {
         setIsRefreshing(false);
+      }
+    });
+  };
+
+  // 保存托管列表
+  const handleSaveHosted = async () => {
+    await withLoading('saveHosted', async () => {
+      try {
+        const resp = await fetch('/api/admin/live/hosted', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(hosted),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `保存失败: ${resp.status}`);
+        await refreshConfig();
+        setShowHostedForm(false);
+        setHosted({ key: '', name: '', epg: '', content: '' });
+        showAlert({ type: 'success', title: '保存成功', message: `已解析 ${data.channelNumber} 个频道`, timer: 2500 });
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '保存失败', showAlert);
+      }
+    });
+  };
+
+  // 载入已有托管列表的内容以便编辑
+  const handleLoadHosted = async () => {
+    await withLoading('loadHosted', async () => {
+      try {
+        const resp = await fetch(`/api/admin/live/hosted?key=${encodeURIComponent(hosted.key)}`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `读取失败: ${resp.status}`);
+        const source = liveSources.find((l) => l.key === hosted.key);
+        setHosted((prev) => ({
+          ...prev,
+          content: data.content,
+          name: prev.name || source?.name || '',
+          epg: prev.epg || source?.epg || '',
+        }));
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '读取失败', showAlert);
+      }
+    });
+  };
+
+  // 后台检测全部线路，结果在直播页以「线路 N ✕」标记
+  const handleCheckHealth = async () => {
+    await withLoading('checkHealth', async () => {
+      try {
+        const resp = await fetch('/api/admin/live/health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `启动失败: ${resp.status}`);
+        showAlert({
+          type: 'success',
+          title: '已开始检测',
+          message: '线路检测在后台进行，频道多时需要几分钟；完成后直播页会把失效线路排到后面并标记。',
+          timer: 4000,
+        });
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '启动失败', showAlert);
       }
     });
   };
@@ -338,7 +405,28 @@ export const LiveSourceConfig = ({
             <span>{isRefreshing || isLoading('refreshLiveSources') ? '刷新中...' : '刷新直播源'}</span>
           </button>
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={handleCheckHealth}
+            disabled={isLoading('checkHealth')}
+            className={isLoading('checkHealth') ? buttonStyles.disabled : buttonStyles.secondary}
+            title='逐条检测线路是否可用'
+          >
+            检测线路
+          </button>
+          <button
+            onClick={() => {
+              setShowHostedForm(!showHostedForm);
+              setShowAddForm(false);
+            }}
+            className={showHostedForm ? buttonStyles.secondary : buttonStyles.primary}
+            title='直接粘贴或上传 m3u 内容，存放在本站数据库中'
+          >
+            {showHostedForm ? '取消' : '托管列表'}
+          </button>
+          <button
+            onClick={() => {
+              setShowAddForm(!showAddForm);
+              setShowHostedForm(false);
+            }}
             className={showAddForm ? buttonStyles.secondary : buttonStyles.success}
           >
             {showAddForm ? '取消' : '添加直播源'}
@@ -378,7 +466,7 @@ export const LiveSourceConfig = ({
             />
             <input
               type='text'
-              placeholder='节目单地址（选填）'
+              placeholder='节目单地址（选填，多个用逗号分隔）'
               value={newLiveSource.epg}
               onChange={(e) =>
                 setNewLiveSource((prev) => ({ ...prev, epg: e.target.value }))
@@ -403,6 +491,79 @@ export const LiveSourceConfig = ({
               className={`w-full sm:w-auto px-4 py-2 ${!newLiveSource.name || !newLiveSource.key || !newLiveSource.url || isLoading('addLiveSource') ? buttonStyles.disabled : buttonStyles.success}`}
             >
               {isLoading('addLiveSource') ? '添加中...' : '添加'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 托管列表表单 */}
+      {showHostedForm && (
+        <div className='p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4'>
+          <p className='text-xs text-gray-500 dark:text-gray-400'>
+            播放列表内容保存在本站数据库中，不需要外部地址。使用已有托管列表的 key 可以载入并修改其内容。
+          </p>
+          <div className='grid grid-cols-1 sm:grid-cols-3 gap-4'>
+            <input
+              type='text'
+              placeholder='名称'
+              value={hosted.name}
+              onChange={(e) => setHosted((prev) => ({ ...prev, name: e.target.value }))}
+              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+            />
+            <div className='flex gap-2'>
+              <input
+                type='text'
+                placeholder='Key（字母、数字、_ -）'
+                value={hosted.key}
+                onChange={(e) => setHosted((prev) => ({ ...prev, key: e.target.value }))}
+                className='flex-1 min-w-0 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+              />
+              <button
+                type='button'
+                onClick={handleLoadHosted}
+                disabled={!hosted.key || isLoading('loadHosted')}
+                className={!hosted.key || isLoading('loadHosted') ? buttonStyles.disabled : buttonStyles.secondary}
+              >
+                载入
+              </button>
+            </div>
+            <input
+              type='text'
+              placeholder='节目单地址（选填，多个用逗号分隔）'
+              value={hosted.epg}
+              onChange={(e) => setHosted((prev) => ({ ...prev, epg: e.target.value }))}
+              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+            />
+          </div>
+          <textarea
+            placeholder={'#EXTM3U\n#EXTINF:-1 tvg-id="CCTV1" group-title="央视",CCTV-1\nhttp://...'}
+            value={hosted.content}
+            onChange={(e) => setHosted((prev) => ({ ...prev, content: e.target.value }))}
+            rows={10}
+            className='w-full px-3 py-2 font-mono text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+          />
+          <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+            <label className='text-sm text-gray-600 dark:text-gray-400'>
+              或上传文件：
+              <input
+                type='file'
+                accept='.m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl'
+                className='ml-2 text-sm'
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const text = await file.text();
+                    setHosted((prev) => ({ ...prev, content: text }));
+                  }
+                }}
+              />
+            </label>
+            <button
+              onClick={handleSaveHosted}
+              disabled={!hosted.name || !hosted.key || !hosted.content || isLoading('saveHosted')}
+              className={`w-full sm:w-auto px-4 py-2 ${!hosted.name || !hosted.key || !hosted.content || isLoading('saveHosted') ? buttonStyles.disabled : buttonStyles.success}`}
+            >
+              {isLoading('saveHosted') ? '保存中...' : '保存'}
             </button>
           </div>
         </div>

@@ -6,7 +6,7 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import { Radio, Tv } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   deleteFavorite,
@@ -37,6 +37,21 @@ interface LiveChannel {
   logo: string;
   group: string;
   url: string;
+  /** 同一分组内同名频道（不同线路）共享的键 */
+  mergeKey: string;
+  /** 线路检查结果：undefined 表示尚未检查 */
+  health?: 'ok' | 'down';
+  healthReason?: string;
+}
+
+// 每个频道只保留第一条线路作为列表中的代表项
+function representatives(list: LiveChannel[]): LiveChannel[] {
+  const seen = new Set<string>();
+  return list.filter((c) => {
+    if (seen.has(c.mergeKey)) return false;
+    seen.add(c.mergeKey);
+    return true;
+  });
 }
 
 // 直播源接口
@@ -76,6 +91,17 @@ function LivePageClient() {
   // 频道相关
   const [currentChannels, setCurrentChannels] = useState<LiveChannel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<LiveChannel | null>(null);
+  // 同一频道的全部线路（按 mergeKey 分组）
+  const linesByKey = useMemo(() => {
+    const m = new Map<string, LiveChannel[]>();
+    for (const c of currentChannels) {
+      const list = m.get(c.mergeKey);
+      if (list) list.push(c);
+      else m.set(c.mergeKey, [c]);
+    }
+    return m;
+  }, [currentChannels]);
+  const currentLines = currentChannel ? linesByKey.get(currentChannel.mergeKey) || [currentChannel] : [];
   useEffect(() => {
     currentChannelRef.current = currentChannel;
   }, [currentChannel]);
@@ -330,14 +356,31 @@ function LivePageClient() {
       }
 
       // 转换频道数据格式
-      const channels: LiveChannel[] = channelsData.map((channel: any) => ({
+      const mapped: LiveChannel[] = channelsData.map((channel: any) => ({
         id: channel.id,
         tvgId: channel.tvgId || channel.name,
         name: channel.name,
         logo: channel.logo,
         group: channel.group || '其他',
-        url: channel.url
+        url: channel.url,
+        mergeKey: channel.mergeKey || `${channel.group}|${channel.name}`,
+        health: channel.health,
+        healthReason: channel.healthReason,
       }));
+      // 保持频道出现顺序，同一频道内可用线路在前、已确认失效的线路在后
+      const firstIndex = new Map<string, number>();
+      mapped.forEach((c, i) => {
+        if (!firstIndex.has(c.mergeKey)) firstIndex.set(c.mergeKey, i);
+      });
+      const channels = mapped
+        .map((c, i) => ({ c, i }))
+        .sort(
+          (a, b) =>
+            (firstIndex.get(a.c.mergeKey) as number) - (firstIndex.get(b.c.mergeKey) as number) ||
+            Number(a.c.health === 'down') - Number(b.c.health === 'down') ||
+            a.i - b.i
+        )
+        .map(({ c }) => c);
 
       setCurrentChannels(channels);
 
@@ -508,7 +551,8 @@ function LivePageClient() {
     if (!channelListRef.current) return;
 
     // 使用 data 属性来查找频道元素
-    const targetElement = channelListRef.current.querySelector(`[data-channel-id="${channel.id}"]`) as HTMLButtonElement;
+    const targetElement = (channelListRef.current.querySelector(`[data-channel-id="${CSS.escape(channel.id)}"]`) ||
+      channelListRef.current.querySelector(`[data-merge-key="${CSS.escape(channel.mergeKey)}"]`)) as HTMLButtonElement | null;
 
     if (targetElement) {
       // 计算滚动位置，使频道居中显示
@@ -1446,13 +1490,16 @@ function LivePageClient() {
                     {/* 频道列表 */}
                     <div ref={channelListRef} className='flex-1 overflow-y-auto space-y-2 pb-4'>
                       {filteredChannels.length > 0 ? (
-                        filteredChannels.map(channel => {
-                          const isActive = channel.id === currentChannel?.id;
+                        representatives(filteredChannels).map(channel => {
+                          const lines = linesByKey.get(channel.mergeKey) || [channel];
+                          const allDown = lines.every((l) => l.health === 'down');
+                          const isActive = currentChannel?.mergeKey === channel.mergeKey;
                           return (
                             <button
                               key={channel.id}
                               data-channel-id={channel.id}
-                              onClick={() => handleChannelChange(channel)}
+                              data-merge-key={channel.mergeKey}
+                              onClick={() => handleChannelChange(lines.find((l) => l.health !== 'down') || channel)}
                               disabled={isSwitchingSource}
                               className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${isSwitchingSource
                                 ? 'opacity-50 cursor-not-allowed'
@@ -1475,11 +1522,15 @@ function LivePageClient() {
                                   )}
                                 </div>
                                 <div className='flex-1 min-w-0'>
-                                  <div className='text-sm font-medium text-gray-900 dark:text-gray-100 truncate' title={channel.name}>
-                                    {channel.name}
+                                  <div className='flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-gray-100' title={channel.name}>
+                                    {allDown && (
+                                      <span className='w-2 h-2 rounded-full bg-red-500 flex-shrink-0' title='所有线路检测失败' />
+                                    )}
+                                    <span className='truncate'>{channel.name}</span>
                                   </div>
                                   <div className='text-xs text-gray-500 dark:text-gray-400 mt-1' title={channel.group}>
                                     {channel.group}
+                                    {lines.length > 1 && <span className='ml-2 text-green-600 dark:text-green-400'>{lines.length} 条线路</span>}
                                   </div>
                                 </div>
                               </div>
@@ -1601,6 +1652,28 @@ function LivePageClient() {
                     <p className='text-sm text-gray-500 dark:text-gray-400 truncate'>
                       {currentSource?.name} {' > '} {currentChannel.group}
                     </p>
+                    {currentLines.length > 1 && (
+                      <div className='mt-2 flex flex-wrap gap-2'>
+                        {currentLines.map((line, idx) => (
+                          <button
+                            key={line.id}
+                            type='button'
+                            onClick={() => handleChannelChange(line)}
+                            disabled={isSwitchingSource || line.id === currentChannel.id}
+                            title={line.health === 'down' ? `检测失败：${line.healthReason || '不可用'}` : line.name}
+                            className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${line.id === currentChannel.id
+                              ? 'bg-green-500 text-white border-green-500'
+                              : line.health === 'down'
+                                ? 'border-red-300 text-red-500 dark:border-red-700'
+                                : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'
+                              }`}
+                          >
+                            线路 {idx + 1}
+                            {line.health === 'down' && ' ✕'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
