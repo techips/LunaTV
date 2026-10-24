@@ -25,7 +25,7 @@ export interface HealthSummary {
   total: number;
   ok: number;
   down: number;
-  /** HEAD 不受支持、又不像播放列表的线路，没有判断 */
+  /** 服务器不接受 HEAD 的线路，没有判断 */
   unknown: number;
   durationMs: number;
 }
@@ -74,27 +74,21 @@ export function classifyHead(head: Uint8Array): { ok: boolean; reason?: string }
   return { ok: false, reason: '无法识别的内容' };
 }
 
-// 播放列表一定是小文件，可以放心 GET；其余（视频流）只看响应头，不读响应体
-const PLAYLIST_PATH_RE = /\.(m3u8?|txt)(\?|$)/i;
-
 function isPlaylistType(ct: string): boolean {
   return /mpegurl|text\/plain/i.test(ct);
 }
 
-function isStreamType(ct: string): boolean {
-  return /^(video|audio)\//i.test(ct) || /x-flv|mp2t/i.test(ct);
-}
 
 /**
  * 检查一条线路是否可用。
  *
- * 先发 HEAD：直播的 TS / FLV 是不会结束的流，GET 之后即使立刻断开，
- * 经过 Docker Desktop 代理等中间层时上游连接也可能不会关闭，导致持续下载。
- * - HEAD 返回视频类型：直接判定可用，不下载。
- * - HEAD 正常但类型不明、地址也不像播放列表：服务器在线，按可用处理。
- * - 其余情况（是播放列表，或服务器不接受 HEAD）：用带 Range 的 GET 读开头一小段判断。
- *   支持 Range 的服务器最多返回 64KB；不支持 Range 又返回视频流时立即断开、不读内容。
- * 无法判断时返回 null（不标记失效）。
+ * 只信任 HEAD：直播的 TS / FLV 是不会结束的流，一旦对它发出 GET，即使马上断开，
+ * 经过 Docker Desktop 的网络层时上游连接也可能不会关闭，持续消耗流量（实测出现过数千条泄漏连接）。
+ * 很多服务器还会忽略 Range，所以 Range GET 也不安全。
+ * - HEAD 返回视频类型或类型不明：服务器在线，判定可用，不下载。
+ * - HEAD 明确返回播放列表类型：播放列表是小文件，GET 读取内容确认。
+ * - HEAD 失败（很多动态地址不接受 HEAD）：不判断（返回 null），既不误判失效，也不去下载。
+ * 网络层错误（连不上、超时）判定为失效。
  */
 export async function checkLine(url: string, ua: string): Promise<LineHealth | null> {
   const t0 = Date.now();
@@ -114,42 +108,34 @@ export async function checkLine(url: string, ua: string): Promise<LineHealth | n
   } catch (error) {
     return failed(error);
   }
+  if (!head.ok) return null;
 
   const headType = head.headers.get('content-type') || '';
-  const finalUrl = head.url || url;
-  if (head.ok && isStreamType(headType)) return done('ok');
-  const playlistPath = PLAYLIST_PATH_RE.test(new URL(finalUrl).pathname);
-  if (head.ok && !isPlaylistType(headType) && !playlistPath) return done('ok');
+  if (!isPlaylistType(headType)) return done('ok');
 
-  // 很多动态地址（跳转服务、直播转播）不接受 HEAD，但 GET 正常，所以 HEAD 失败不直接判失效
-  let res: Response;
+  // 只有 HEAD 明确说是播放列表时才 GET；读取时设上限，内容不对立即强制断开连接
+  const controller = new AbortController();
   try {
-    res = await fetchWithHeaderTimeout(
-      finalUrl,
-      { redirect: 'follow', headers: { ...headers, Range: 'bytes=0-65535' } },
+    const res = await fetchWithHeaderTimeout(
+      head.url || url,
+      { redirect: 'follow', headers, signal: controller.signal },
       8000
     );
+    if (!res.ok) {
+      controller.abort();
+      return done('down', `HTTP ${res.status}`);
+    }
+    if (!isPlaylistType(res.headers.get('content-type') || '')) {
+      controller.abort();
+      return done('ok');
+    }
+    const verdict = classifyHead(await readHead(res));
+    controller.abort();
+    return done(verdict.ok ? 'ok' : 'down', verdict.reason);
   } catch (error) {
+    controller.abort();
     return failed(error);
   }
-  if (!res.ok) {
-    res.body?.cancel().catch(() => undefined);
-    return done('down', `HTTP ${res.status}`);
-  }
-
-  const getType = res.headers.get('content-type') || '';
-  if (isStreamType(getType)) {
-    res.body?.cancel().catch(() => undefined);
-    return done('ok');
-  }
-  const bounded = res.status === 206 || isPlaylistType(getType) || playlistPath;
-  if (!bounded) {
-    // 不支持 Range、类型也不明：可能是流，不读内容
-    res.body?.cancel().catch(() => undefined);
-    return head.ok ? done('ok') : null;
-  }
-  const verdict = classifyHead(await readHead(res));
-  return done(verdict.ok ? 'ok' : 'down', verdict.reason);
 }
 
 async function runPool<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {

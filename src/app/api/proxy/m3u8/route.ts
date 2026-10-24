@@ -20,11 +20,13 @@ export async function GET(request: Request) {
   const direct =
     new URL(request.url).searchParams.get('allowCORS') === 'true';
 
+  // 放弃响应时用 abort 强制断开连接（只取消响应流可能留下仍在下载的上游连接）
+  const controller = new AbortController();
   let upstream: Response;
   try {
     upstream = await fetchWithTimeout(
       target.url,
-      { redirect: 'follow', headers: { 'User-Agent': target.ua } },
+      { redirect: 'follow', headers: { 'User-Agent': target.ua }, signal: controller.signal },
       15000
     );
   } catch (error) {
@@ -33,7 +35,7 @@ export async function GET(request: Request) {
   }
 
   if (!upstream.ok) {
-    upstream.body?.cancel().catch(() => undefined);
+    controller.abort();
     return NextResponse.json(
       { error: `Upstream ${upstream.status}` },
       { status: 502 }
@@ -46,12 +48,15 @@ export async function GET(request: Request) {
 
   // 视频流（TS / FLV 等）不转发：播放器只支持 HLS，且这类流不会结束
   if (!isPlaylistContentType(contentType)) {
-    upstream.body?.cancel().catch(() => undefined);
+    controller.abort();
     return notHls();
   }
 
   const text = await readPlaylistText(upstream);
-  if (text === null) return notHls();
+  if (text === null) {
+    controller.abort();
+    return notHls();
+  }
 
   const body = rewritePlaylist(text, upstream.url || target.url, {
     proxyBase: '/api/proxy',
@@ -93,6 +98,6 @@ async function readPlaylistText(res: Response): Promise<string | null> {
     text += decoder.decode();
     return looksLikePlaylist(text) ? text : null;
   } finally {
-    reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
