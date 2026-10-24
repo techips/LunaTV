@@ -452,18 +452,29 @@ export async function resetConfig() {
  * 以事务方式修改配置：读取数据库中最新的配置 → 深拷贝 → 执行修改 → 带版本号写回。
  * 若写回时发现期间有其他写入（版本号变化），自动重试，避免并发保存互相覆盖。
  *
- * mutate 返回 Response（例如参数校验失败）时不写库，直接把该 Response 返回给调用方。
+ * mutate 返回错误的 Response（status >= 400，例如参数校验失败）时不写库，直接返回该 Response；
+ * 返回成功的 Response 或其他值时写库，并把该值返回给调用方。
  * mutate 内不要做耗时的网络请求，应在调用前完成。
  */
-export async function updateConfig<T>(
+// 同一进程内的配置写入排队执行；跨实例的并发由版本号乐观锁兜底
+let configWriteQueue: Promise<unknown> = Promise.resolve();
+
+export function updateConfig<T>(mutate: (draft: AdminConfig) => T | Promise<T>): Promise<T> {
+  const run = configWriteQueue.then(() => updateConfigOnce(mutate));
+  configWriteQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function updateConfigOnce<T>(
   mutate: (draft: AdminConfig) => T | Promise<T>
 ): Promise<T> {
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     const { config, version } = await db.getAdminConfigWithVersion();
     const base = config ? config : await getInitConfig('');
     const draft = configSelfCheck(structuredClone(base));
     const result = await mutate(draft);
-    if (result instanceof Response) {
+    // 返回错误响应（参数校验失败等）时放弃本次修改；成功响应照常写库
+    if (result instanceof Response && !result.ok) {
       return result;
     }
     const newVersion = await db.casAdminConfig(configSelfCheck(draft), version);
@@ -472,8 +483,8 @@ export async function updateConfig<T>(
       cachedConfigAt = Date.now();
       return result;
     }
-    // 被并发写入抢先，稍等后基于最新数据重试
-    await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+    // 被其他实例的写入抢先，随机退避后基于最新数据重试
+    await new Promise((r) => setTimeout(r, 30 * (attempt + 1) + Math.random() * 50));
   }
   throw new Error('配置保存冲突，请稍后重试');
 }
